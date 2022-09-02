@@ -1,0 +1,785 @@
+---
+title: "T cell"
+date: "2022-08-15"
+output:
+  rmarkdown::html_document:
+    toc: yes
+    toc_depth: 3
+    toc_float: yes
+    theme: flatly
+    highlight: zenburn
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+knitr::opts_knit$set(root.dir = "../..")
+
+```
+
+## Load in libraries
+```{r}
+library(tidyverse)
+library(readxl)
+library(mgcv)
+library(emmeans)
+library(ggeffects)
+library(lme4)
+library(gamlss)
+library(hrbrthemes)
+library(DT)
+library(ggpubr)
+library(cowplot)
+source("scripts/utils/utils.R")
+```
+
+## Load data
+```{r}
+# color panel
+panel0 <-
+  c("#c85979",
+    "#6980ce",
+    "#4aac8d",
+    "#b460bd",
+    "#cd5d39",
+    "#b49541",
+    "#4ab0aa")
+dosepanel <- c("#cb6939", "#8264cb")
+d <- read_excel("processed_data/Tcell.xlsx")
+dt <- d %>%
+  mutate(
+    animal_id = factor(animal_id),
+    interval = factor(interval),
+    day = factor(day, levels = c(64, 87, 143, 227)),
+    interval = factor(interval, levels = c("PBS", 0:8))
+  )
+
+```
+
+## Model fitting for CD4 data
+```{r,message=FALSE, results = 'hide'}
+# data analysis for CD4 cell Th1 responses
+dt4 <- dt %>%
+  filter(cell_type == "CD4" & interval != "PBS") %>%
+  droplevels()
+
+# fit zero inflated beta regression
+con1 <- gamlss::gamlss.control(n.cyc = 100, trace = FALSE)
+combos <- expand.grid(unique(dt4$cytokine), unique(dt4$stimulation))
+
+# split data by cytokine and stimulation 
+datas <-
+  map2(combos$Var1, combos$Var2, ~
+         dt4 %>% filter(cytokine == .x & stimulation == .y)) %>%
+  setNames(paste(combos$Var1, combos$Var2, sep= "_" )) 
+
+# function to fit zero inflated beta regression
+fit_fun <- function(dt, compare = interval) {
+  data = dt
+  if (compare == "interval") {
+    formula = as.formula("~ interval | day")
+  } else{
+    formula = as.formula("~ day|interval")
+  }
+  tryCatch({
+    fit <- gamlss::gamlss(
+      prop ~  day * interval,
+      sigma.fo = ~ day * interval,
+      family = BEZI,
+      data = data,
+      trace = F,
+      control = con1
+    )
+    em_fit <-
+      emmeans::emmeans(ref_grid(fit, cov.keep = c("interval", "day")),
+                       specs = formula ,
+                       type = "response")
+  },
+  error = function(e) {
+    fit <- gamlss::gamlss(
+      prop ~  interval + day,
+      sigma.fo = ~ day + interval,
+      family = BEZI,
+      data = data,
+      trace = F,
+      control = con1
+    )
+    em_fit <-
+      emmeans(ref_grid(fit, cov.keep = c("interval", "day")),
+              specs = formula ,
+              type = "response")
+  })
+  return(list(fit = fit, emm_fit = em_fit))
+}
+
+# obtain the model 
+set.seed(100)
+beta_fits <-
+  purrr::map(datas, ~ fit_fun(dt = .x, compare = "interval"))
+fits <- purrr::transpose(beta_fits)[[1]] 
+
+emmt_dat2 <- 
+  purrr::transpose(beta_fits)[[2]] %>%
+  imap(~.x %>% 
+         as_tibble() %>%
+         mutate(info = .y)) %>%
+  bind_rows() %>%
+  separate(info, c("cytokine", "coating"), "_")
+```
+
+
+### Residual diagnostics for CD4+ data
+
+```{r, fig.height = 8, fig.width=12}
+assumption_plots <-
+  imap(
+    fits ,
+    ~ assumption_check(.x) %>%
+      plot_grid(
+        ggdraw() + draw_label(
+          paste0(str_replace(.y, "_", ", " ), "-specific"),
+          x = 0.03,
+          hjust = 0
+        ),
+        .,
+        ncol = 1,
+        rel_heights = c(0.1, 1),
+        align = "v"
+      )
+  )
+ggarrange(plotlist = assumption_plots)
+```
+
+
+### Supplementary Figure 4AB: CD4 fold change and heatmap
+```{r}
+#-------------------------------------------------------------------------------
+# Supplementary Figure 4A: CD4 fold change
+#-------------------------------------------------------------------------------
+plots <-
+  emmt_dat2 %>%
+  mutate(day = as.numeric(as.character(day))) %>%
+  mutate(
+    interval = forcats::fct_recode(
+      interval,
+      "8 weeks" = "8",
+      "6 weeks" = "6",
+      "4 weeks" = "4",
+      "3 weeks" = "3",
+      "2 weeks" = "2",
+      "1 week" = "1",
+      "Prime only" = "0"
+    )
+  ) %>%
+  split(.$cytokine) %>%
+  imap(
+    ~ .x %>%
+      filter(day == 227) %>%
+      ggplot(aes(
+        x = interval, y = response * 100, color = interval
+      )) +
+      geom_jitter(position = position_dodge(width = 0.5), size = 2)  +
+      geom_errorbar(
+        aes(ymin = asymp.LCL * 100, ymax = asymp.UCL * 100),
+        width = .1,
+        position = position_dodge(width = 0.5),
+        size = 1
+      ) +
+      scale_color_manual(values = panel0) +
+      theme_bw() +  theme(panel.grid.major = element_line(colour = "grey100")) +
+      facet_grid(day ~ coating, space = "free_x", scales = "free") +
+      labs(title = paste("CD4+ T cells (", .y, ")"),
+           subtitle = "24 weeks after the boost dose according to antigen and
+           mRNA-1273 dosing interval",
+           x = "", y = "Estimated % of CD4+ T cells") +
+      theme(
+        axis.text = element_text(size = 9),
+        axis.text.x = element_text(
+          angle = 45,
+          hjust = 1,
+          vjust = 1
+        ),
+        axis.title = element_text(size = 14),
+        strip.text = element_text(size = 10),
+        legend.text = element_text(size = 14),
+        legend.title = element_text(size = 14),
+        plot.title = element_text(size = 14, face = "bold"),
+        panel.spacing = unit(0, "lines")
+      )
+    
+  )
+
+
+
+set.seed(100)
+emmt_dat <-
+  purrr::transpose(beta_fits)[[2]] %>%
+  imap(
+    ~ contrast(
+      regrid(regrid(.x, "response"), transform = "log10"),
+      "pairwise",
+      infer = TRUE,
+      adjust = "mvt",
+      ratio = FALSE,
+      level = .95
+    ) %>% as_tibble() %>%
+      mutate(info = .y)
+  ) %>%
+  bind_rows() %>%
+  separate(info, c("cytokine", "coating"), "_")
+
+emmt_dat_reverse <-
+  emmt_dat %>%
+  mutate("significant or not" = ifelse(asymp.LCL < 0 &
+                                         asymp.UCL > 0, "no", "yes")) %>%
+  dplyr::select(contrast, day, estimate, cytokine, coating, `significant or not`) %>%
+  separate(contrast, c("g2", "g1"), " - ") %>%
+  mutate(estimate = -estimate)
+
+# heat map-----------
+heatmaps <-
+  emmt_dat %>%
+  mutate("significant or not" = ifelse(asymp.LCL < 0 &
+                                         asymp.UCL > 0, "no", "yes")) %>%
+  dplyr::select(contrast, day, estimate, cytokine, coating, `significant or not`) %>%
+  separate(contrast, c("g1", "g2"), " - ") %>%
+  bind_rows(emmt_dat_reverse) %>%
+  mutate(g1 = str_remove(g1, "interval"),
+         g2 = str_remove(g2, "interval")) %>%
+  split(.$cytokine) %>%
+  imap(
+    ~ complete(.x, g2, g1, day, cytokine, coating) %>%
+      mutate("significant or not" = ifelse(
+        is.na(`significant or not`), "no", `significant or not`
+      )) %>%
+      dplyr::rename(`Estimated fold change` = `estimate`) %>%
+      filter(day == 227) %>%
+      ggplot(aes(
+        x = g2, y = g1, fill = `Estimated fold change`
+      )) +
+      scale_x_discrete(position = "top") +
+      scale_fill_gradient2(
+        na.value = "grey25",
+        breaks = log10(c(1 / 10, 1 / 3,  1, 3, 10)),
+        labels =  c("1/10", "1/3", 1, 3, 10),
+        high = scales::muted("red"),
+        low = scales::muted("blue")
+      ) +
+      theme_ipsum() +
+      geom_tile() +
+      geom_point(
+        aes(shape = `significant or not`),
+        color = "black",
+        size = 2
+      ) +
+      scale_shape_manual(values = c(NA, 8)) +
+      labs(shape = "significantly\ndifferent?", x = "Comparison", y = "") +
+      facet_wrap(
+        ~ coating,
+        scales = "free",
+        strip.position = "top",
+        nrow = 1
+      ) +
+      ggtitle(paste("Estimated fold change in percentage of spike-specific", .y ,"-producing 
+                    CD4+ T cells")) +
+      theme(
+        strip.placement = "outside",
+        axis.text = element_text(size = 10),
+        axis.title = element_text(size = 10),
+        strip.text = element_text(size = 10),
+        legend.text = element_text(size = 12),
+        legend.title = element_text(size = 12)
+      )
+  )
+
+
+```
+
+```{r, fig.height = 4}
+plots[[1]]
+```
+
+```{r, fig.width=14, fig.height=6}
+heatmaps[[1]]
+```
+
+### Supplementary Table 6. Statistical comparisons of percentage of SARS-CoV-2 spike-specific IFNγ, IL-2, and TNFα producing CD4+ T cells through 24 weeks following dose 2.
+```{r}
+# CD 4 table 6
+set.seed(100)
+emmt_table <-
+  purrr::transpose(beta_fits)[[2]] %>%
+  imap(
+    ~ contrast(
+      regrid(regrid(.x, "response"), transform = "log10"),
+      "pairwise",
+      infer = TRUE,
+      adjust = "mvt",
+      level = .95
+    ) %>% as_tibble() %>%
+      mutate(info = .y)
+  ) %>%
+  bind_rows() %>%
+  separate(info, c("cytokine", "coating"), "_")
+
+emmt_table %>%
+  as_tibble() %>%
+  dplyr::select(contrast, ratio, day, cytokine, coating, p.value) %>%
+  filter(p.value < 0.05) %>%
+  rename(
+    "Pairwise comparison" = contrast,
+    "Fold change" = "ratio",
+    "Cytokine" = "cytokine",
+    "Coating" = "coating",
+    "Adjusted P-value" = "p.value"
+  ) %>%
+  DT::datatable(
+    caption = "Statistical comparisons of percentage of SARS-CoV-2
+                spike-specific IFNγ, IL-2, and TNFα producing CD4+ T cells through 24 weeks
+                following dose 2"
+  ) %>%
+  formatSignif(columns = c('Fold change', 'Adjusted P-value'),
+               digits = 7)
+
+```
+
+### Supplementary Figure 12 Statistical comparisons of percentage of SARS-CoV-2 spike-specific IFNγ, IL-2, and TNFα producing CD4+ T cells through 24 weeks following dose 2 (Supplementary Table 6 visualization)
+```{r, fig.width=21, fig.height=24}
+cd4_emmeans <-
+  emmt_table %>%
+  as_tibble() %>%
+  mutate(cytokine = case_when(
+    cytokine == "IFNg" ~ "IFNγ",
+    cytokine == "TNFa" ~ "TNFα",
+    TRUE ~ cytokine
+  )) %>%
+  mutate(day = case_when(
+    day == "64" ~ "7_1",
+    day == "87" ~ "30_4",
+    day == "143" ~ "86_12",
+    day == "227" ~ "169_24"
+  )) %>%
+  mutate(contrast = str_remove_all(contrast, "interval")) %>%
+  filter(coating == "S1" | coating == "S2") %>%
+  mutate(group = paste(coating, "specific", cytokine)) %>%
+  mutate(
+    "Statistically Significant" = ifelse(p.value < 0.05, "yes", "no"),
+    `Statistically Significant` = factor(`Statistically Significant`, levels = c("yes", "no"))
+  ) %>%
+  filter(!is.na(`Statistically Significant`)) %>%
+  rename(
+    "Pairwise comparison" = contrast,
+    "Fold change" = "ratio",
+    "Adjusted P-value" = "p.value"
+  ) %>%
+  split(.$day) %>%
+  imap(
+    ~ .x %>%
+      ggplot(
+        aes(x = `Pairwise comparison` , y = `Fold change`, color = `Statistically Significant`)
+      ) +
+      geom_point(size = 3)  +
+      geom_errorbar(
+        aes(ymin = asymp.LCL, ymax = asymp.UCL),
+        width = .1,
+        size = 1
+      ) +
+      theme_bw() +  theme(panel.grid.major = element_line(colour = "grey100")) +
+      scale_y_continuous(
+        breaks = (c(1, 3, 10)),
+        labels = c(1, 3, 10),
+        trans = "sqrt"
+      ) +
+      geom_hline(
+        yintercept = 1,
+        color = "darkcyan",
+        lty = "dashed"
+      ) +
+      labs(
+        x = "",
+        y = "",
+        #title = "Estimated fold change of SARS-CoV-2 spike-specific ",
+        title = paste0(
+          str_split(.y, "_")[[1]][1],
+          " days post dose 2 (approximate ",
+          str_split(.y, "_")[[1]][2],
+          " week post-dose 2)"
+        )
+      ) +
+      facet_grid(~ group,
+                 scales = "free",
+                 space = "free") +
+      coord_flip() +
+      theme(
+        strip.text = element_text(size = 14),
+        legend.text = element_text(size = 14),
+        legend.title = element_text(size = 14),
+        axis.text = element_text(size = 14),
+        legend.position = "none"
+      )
+    
+  )
+
+
+
+p <-
+  ggarrange(
+    cd4_emmeans$`7_1`,
+    cd4_emmeans$`30_4`,
+    cd4_emmeans$`86_12`,
+    cd4_emmeans$`169_24` ,
+    ncol = 1,
+    align = 'h',
+    labels = c('A', 'B', 'C', 'D'),
+    common.legend = T
+  )
+p
+
+
+```
+
+## Model fitting for CD8 data
+```{r, message=FALSE, results = 'hide'}
+# data analysis for CD8 cell Th1 responses
+dt8 <- subset(dt, cell_type == "CD8" & interval !="PBS") %>%
+  droplevels()
+
+# fit zero inflated beta regression
+con1 <- gamlss.control(n.cyc=40, trace = FALSE)
+combos <- expand.grid(unique(dt8$cytokine), unique(dt8$stimulation))
+
+# split data by cytokine and stimulation 
+datas8 <-
+  map2(combos$Var1, combos$Var2, ~
+         dt8 %>% filter(cytokine == .x & stimulation == .y)) %>%
+  setNames(paste(combos$Var1, combos$Var2, sep= "_" )) 
+
+# obtain the model 
+set.seed(100)
+beta_fits8 <-
+  purrr::map(datas8, ~ fit_fun(dt = .x, compare = "interval"))
+
+# obtain emmeans
+emmt_ind8 <- 
+  purrr::transpose(beta_fits8)[[2]]%>%
+  imap(~.x %>% 
+         as_tibble()%>%
+         mutate(info = .y)) %>%
+  bind_rows()%>%
+  separate(info, c("cytokine", "coating"), "_")
+```
+
+### Residual diagnostics for CD8+ data
+```{r, fig.height = 8, fig.width=12}
+fits <- purrr::transpose(beta_fits8)[[1]] 
+
+assumption_plots <-
+  imap(
+    fits ,
+    ~ assumption_check(.x) %>%
+      plot_grid(
+        ggdraw() + draw_label(
+          paste0(str_replace(.y, "_", ", " ), "-specific"),
+          x = 0.03,
+          hjust = 0
+        ),
+        .,
+        ncol = 1,
+        rel_heights = c(0.1, 1),
+        align = "v"
+      )
+  )
+ggarrange(plotlist = assumption_plots)
+```
+
+### Supplementary Figure 4CD: CD8 fold change
+
+```{r}
+set.seed(100)
+emmt_dat8 <- 
+  purrr::transpose(beta_fits8)[[2]]%>%
+  imap(~contrast(regrid(regrid(.x, "response"), transform = "log10"), 
+                 "pairwise",
+                 infer = TRUE,
+                 adjust = "mvt",
+                 ratio = FALSE,
+                 level = .95)%>% as_tibble() %>%
+         mutate(info = .y)) %>%
+  bind_rows()%>%
+  separate(info, c("cytokine", "coating"), "_")
+
+emmt_dat_reverse8 <- 
+  emmt_dat8 %>%
+  mutate("significant or not" = ifelse(asymp.LCL<0 & asymp.UCL >0, "no", "yes"))%>%
+  dplyr::select(contrast, day, estimate, cytokine, coating, `significant or not`)%>%
+  separate(contrast, c("g2", "g1"), " - ")%>%
+  mutate(estimate = -estimate)
+
+plots <-
+  emmt_ind8 %>%
+  mutate(day = as.numeric(as.character(day))) %>%
+  mutate(
+    interval = forcats::fct_recode(
+      interval,
+      "8 weeks" = "8",
+      "6 weeks" = "6",
+      "4 weeks" = "4",
+      "3 weeks" = "3",
+      "2 weeks" = "2",
+      "1 week" = "1",
+      "Prime only" = "0"
+    )
+  ) %>%
+  split(.$cytokine) %>%
+  imap(
+    ~ .x %>%
+      filter(day == 227) %>%
+      ggplot(aes(
+        x = interval, y = response * 100, color = interval
+      )) +
+      geom_jitter(position = position_dodge(width = 0.5), size = 2)  +
+      geom_errorbar(
+        aes(ymin = asymp.LCL * 100, ymax = asymp.UCL * 100),
+        width = .1,
+        position = position_dodge(width = 0.5),
+        size = 1
+      ) +
+      scale_color_manual(values = panel0) +
+      theme_bw() +  theme(panel.grid.major = element_line(colour = "grey100")) +
+      facet_grid(day ~ coating, space = "free_x", scales = "free") +
+      labs(
+        title = paste("CD4+ T cells (", .y, ")"),
+        subtitle = "24 weeks after the boost dose according to antigen and
+           mRNA-1273 dosing interval",
+        x = "",
+        y = "Estimated % of CD8+ T cells"
+      ) +
+      theme(
+        axis.text = element_text(size = 9),
+        axis.text.x = element_text(
+          angle = 45,
+          hjust = 1,
+          vjust = 1
+        ),
+        axis.title = element_text(size = 14),
+        strip.text = element_text(size = 10),
+        legend.text = element_text(size = 14),
+        legend.title = element_text(size = 14),
+        plot.title = element_text(size = 14, face = "bold"),
+        panel.spacing = unit(0, "lines")
+      )
+    
+  )
+
+
+### Supplementary Figure 4D: CD8 heatmap
+heatmaps <-
+  emmt_dat8 %>%
+  mutate("significant or not" = ifelse(asymp.LCL < 0 &
+                                         asymp.UCL > 0, "no", "yes")) %>%
+  dplyr::select(contrast, day, estimate, cytokine, coating, `significant or not`) %>%
+  separate(contrast, c("g1", "g2"), " - ") %>%
+  bind_rows(emmt_dat_reverse8) %>%
+  mutate(g1 = str_remove(g1, "interval"),
+         g2 = str_remove(g2, "interval")) %>%
+  split(.$cytokine) %>%
+  imap(
+    ~ complete(.x, g2, g1, day, cytokine, coating) %>%
+      mutate("significant or not" = ifelse(
+        is.na(`significant or not`), "no", `significant or not`
+      )) %>%
+      dplyr::rename(`Estimated fold change` = `estimate`) %>%
+      filter(day == 227) %>%
+      ggplot(aes(
+        x = g2, y = g1, fill = `Estimated fold change`
+      )) +
+      scale_x_discrete(position = "top") +
+      scale_fill_gradient2(
+        na.value = "grey25",
+        breaks = log10(c(1 / 10, 1 / 3, 1 / 2, 1, 2, 3, 10)),
+        labels =  c("1/10", "1/3", "1/2", 1, 2, 3, 10),
+        high = scales::muted("red"),
+        low = scales::muted("blue")
+      ) +
+      theme_ipsum() +
+      geom_tile() +
+      geom_point(
+        aes(shape = `significant or not`),
+        color = "black",
+        size = 2
+      ) +
+      scale_shape_manual(values = c(NA, 8)) +
+      labs(shape = "significantly\ndifferent?", x = "Comparison", y = "") +
+      facet_wrap(
+        ~ coating,
+        scales = "free",
+        strip.position = "top",
+        nrow = 1
+      ) +
+      ggtitle(
+        paste(
+          "Estimated fold change in percentage of spike-specific",
+          .y ,
+          "-producing
+                    CD8+ T cells"
+        )
+      ) +
+      theme(
+        strip.placement = "outside",
+        axis.text = element_text(size = 10),
+        axis.title = element_text(size = 10),
+        strip.text = element_text(size = 10),
+        legend.text = element_text(size = 12),
+        legend.title = element_text(size = 12)
+      )
+  )
+
+
+```
+
+```{r, fig.height = 4}
+plots[[1]]
+
+```
+```{r, fig.width=14, fig.height=6}
+heatmaps[[1]]
+
+```
+
+### Supplementary Table 7. Statistical comparisons of percentage of SARS-CoV-2 spike-specific IFNγ, IL-2, and TNFα producing CD8+ T cells through 24 weeks following dose 2
+```{r}
+## CD 8 table 7
+set.seed(100)
+emmt_table8 <-
+  purrr::transpose(beta_fits8)[[2]] %>%
+  imap(
+    ~ contrast(
+      regrid(regrid(.x, "response"), transform = "log10"),
+      "pairwise",
+      infer = TRUE,
+      adjust = "mvt",
+      level = .95
+    ) %>% as_tibble() %>%
+      mutate(info = .y)
+  ) %>%
+  bind_rows() %>%
+  separate(info, c("cytokine", "coating"), "_")
+
+emmt_table8 %>%
+  as_tibble() %>%
+  dplyr::select(contrast, ratio, day, cytokine, coating, p.value) %>%
+  filter(p.value < 0.05) %>%
+  rename(
+    "Pairwise comparison" = contrast,
+    "Fold change" = "ratio",
+    "Cytokine" = "cytokine",
+    "Coating" = "coating",
+    "Adjusted P-value" = "p.value"
+  ) %>%
+  DT::datatable(caption = "Statistical comparisons of percentage of SARS-CoV-2 spike-specific IFNγ, IL-2, and TNFα producing CD8+ T cells through 24 weeks following dose 2
+") %>%
+  formatSignif(columns = c('Fold change', 'Adjusted P-value'),
+               digits = 7)
+
+```
+
+### Supplementary Figure 13 Statistical comparisons of percentage of SARS-CoV-2 spike-specific IFNγ, IL-2, and TNFα producing CD8+ T cells through 24 weeks following dose 2 (Supplementary Table 7 visualization)
+```{r, fig.width=26, fig.height=24}
+cd8_emmeans <-
+  emmt_table8 %>%
+  as_tibble() %>%
+  mutate(cytokine = case_when(
+    cytokine == "IFNg" ~ "IFNγ",
+    cytokine == "TNFa" ~ "TNFα",
+    TRUE ~ cytokine
+  )) %>%
+  mutate(day = case_when(
+    day == "64" ~ "7_1",
+    day == "87" ~ "30_4",
+    day == "143" ~ "86_12",
+    day == "227" ~ "169_24"
+  )) %>%
+  mutate(contrast = str_remove_all(contrast, "interval")) %>%
+  filter(coating == "S1" | coating == "S2") %>%
+  mutate(group = paste(coating, "specific", cytokine)) %>%
+  mutate(
+    "Statistically Significant" = ifelse(p.value < 0.05, "yes", "no"),
+    `Statistically Significant` = factor(`Statistically Significant`, levels = c("yes", "no"))
+  ) %>%
+  filter(!is.na(`Statistically Significant`)) %>%
+  rename(
+    "Pairwise comparison" = contrast,
+    "Fold change" = "ratio",
+    "Adjusted P-value" = "p.value"
+  ) %>%
+  split(.$day) %>%
+  imap(
+    ~ .x %>%
+      ggplot(
+        aes(x = `Pairwise comparison` , y = `Fold change`, color = `Statistically Significant`)
+      ) +
+      geom_point(size = 3)  +
+      geom_errorbar(
+        aes(ymin = asymp.LCL, ymax = asymp.UCL),
+        width = .1,
+        size = 1
+      ) +
+      theme_bw() +  theme(panel.grid.major = element_line(colour = "grey100")) +
+      scale_y_continuous(
+        breaks = (c(1, 3, 10)),
+        labels = c(1, 3, 10),
+        trans = "sqrt"
+      ) +
+      geom_hline(
+        yintercept = 1,
+        color = "darkcyan",
+        lty = "dashed"
+      ) +
+      labs(
+        x = "",
+        y = "",
+        #title = "Estimated fold change of SARS-CoV-2 spike-specific ",
+        title = paste0(
+          str_split(.y, "_")[[1]][1],
+          " days post dose 2 (approximate ",
+          str_split(.y, "_")[[1]][2],
+          " week post-dose 2)"
+        )
+      ) +
+      facet_grid(~ group,
+                 scales = "free",
+                 space = "free") +
+      coord_flip() +
+      theme(
+        strip.text = element_text(size = 14),
+        legend.text = element_text(size = 14),
+        legend.title = element_text(size = 14),
+        axis.text = element_text(size = 14),
+        legend.position = "none"
+      )
+    
+  )
+
+
+
+p8 <-
+  ggarrange(
+    cd8_emmeans$`7_1`,
+    cd8_emmeans$`30_4`,
+    cd8_emmeans$`86_12`,
+    cd8_emmeans$`169_24` ,
+    ncol = 1,
+    align = 'h',
+    labels = c('A', 'B', 'C', 'D'),
+    common.legend = T
+  )
+p8
+
+
+```
+
+## Session information
+
+```{r}
+sessionInfo()
+```
+

@@ -1,0 +1,257 @@
+---
+title: "Anti-PEG"
+output:
+  rmarkdown::html_document:
+    toc: yes
+    toc_depth: 3
+    toc_float: yes
+    theme: flatly
+    highlight: zenburn
+date: "2022-08-06"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+knitr::opts_knit$set(root.dir = "../..")
+```
+
+## Load in libraries
+
+```{r}
+#-------------------------------------------------------------------------------
+# ANALYSIS OF ADCC DATA
+#-------------------------------------------------------------------------------
+library(tidyverse)
+library(lme4)
+library(merTools)
+library(emmeans)
+library(writexl)
+library(DT)
+library(cowplot)
+library(MuMIn)
+source("scripts/utils/utils.R")
+modernacolors()
+```
+
+## Read in dataset
+
+```{r}
+set.seed(100)
+d <- readxl::read_xlsx("processed_data/antiPEG.xlsx") %>%
+  mutate(
+    interval = factor(interval, levels = c("PBS", 8,6,4,3,2,1,"Prime Only")),
+    dose = factor(dose, levels = c("0ug", "1ug", "10ug")),
+    sheet = paste0(sheet, " Concentration"),
+    log2_titer = log2(antiPEG_titer),
+    case = ifelse(dose == "0ug", "PBS", "Dosed"),
+    case = factor(case, levels = c("PBS", "Dosed"))
+  )
+```
+
+
+## Figure 6A-B: Anti-PEG Antibody Responses
+
+```{r, fig.width=9.89, fig.height = 7.89}
+# Visualize the full dataset ---------------------------------------------------
+d_dotplot <- d %>%
+  mutate(interval = factor(interval, levels = c("PBS", "Prime Only", 1, 2, 3, 4, 6, 8)))
+p_raw <-  d_dotplot %>%
+  ggplot(aes(
+    x = interval,
+    y = antiPEG_titer,
+    color = interval,
+    shape = dose,
+    group = dose
+  )) +
+  geom_point(position = position_jitterdodge(jitter.width = 1)) +
+  stat_summary(
+    aes(group = interaction(interval, dose)),
+    data = d_dotplot,
+    geom = "errorbar",
+    width = 0.5,
+    position = position_dodge(width = 1),
+    size = 0.5,
+    inherit.aes = TRUE
+  ) +
+  stat_summary(
+    aes(group = interaction(dose, interval)),
+    data = d_dotplot,
+    geom = "bar",
+    position = position_dodge(width = 1),
+    size = 1,
+    inherit.aes = TRUE,
+    fill = NA
+  ) +
+  scale_shape_manual(values = 15:17) +
+  scale_color_manual(
+    values = c(
+      modernalightgray,
+      modernadarkgray,
+      modernalightblue,
+      modernaorange,
+      modernapurple,
+      modernagreen,
+      modernablue,
+      modernared
+    )
+  ) +
+  scale_y_continuous(trans = "log10",
+                     breaks = c(10, 100, 1000, 10000, 100000)) +
+  scale_x_discrete(labels = ~ ifelse(
+    str_detect(.x, "[[:digit:]]"),
+    paste0(.x, "-week\ninterval"),
+    .x
+  )) +
+  labs(
+    y = "Concentration (ng/mL)",
+    x = "Dose interval",
+    color = "Dose interval",
+    shape = "Dose (ug)"
+  ) +
+  facet_wrap( ~ sheet, nrow = 2, scales = "free_y") +
+  theme_bw()
+print(p_raw)
+```
+
+```{r echo = FALSE}
+ggsave("figures_tables/antiPEG/antiPEG_dotplots.png", width = 9.89, height = 7.81)
+```
+
+## Model fitting
+
+```{r}
+#-----------------------------------------------------------------------------
+# Fit simple mixed models with random intercept for dose level
+#   One model each for IgG, IgM
+#-----------------------------------------------------------------------------
+spl <- group_split(d, sheet) %>%
+  set_names(map_chr(., ~ .x$sheet[1]))
+f <- purrr::map(spl, ~ lmer(log2_titer ~ interval + (1 | dose), data = .x))
+```
+
+
+### Diagnostics
+
+The fitted model for IgG has:
+
++ AIC = `r AIC(f[str_detect(names(f), "IgG")][[1]])`
++ BIC = `r BIC(f[str_detect(names(f), "IgG")][[1]])`
++ Conditional adjusted $R^2$ = `r MuMIn::r.squaredGLMM(f[str_detect(names(f), "IgG")][[1]])[,"R2c"]`
+
+and the fitted model for IgM has:
+
++ AIC = `r AIC(f[str_detect(names(f), "IgM")][[1]])`
++ BIC = `r BIC(f[str_detect(names(f), "IgM")][[1]])`
++ Conditional adjusted $R^2$ = `r MuMIn::r.squaredGLMM(f[str_detect(names(f), "IgM")][[1]])[,"R2c"]`
+
+where conditional adjusted $R^2$ is defined as the proportion of variance explained by both the fixed and random effects in the model. The low conditional adjusted $R^2$ arises from the fact that a large proportion of variation in the data comes from within-group animal-to-animal variability, as can be seen in the above dotplots of the raw data.
+
+Model fits are summarized below.
+
+```{r}
+map(f, summary)
+```
+### Residual plots
+
+```{r}
+par(mfrow = c(2, 2))
+plot(
+  fitted(f[[1]]),
+  residuals(f[[1]]),
+  xlab = "Fitted values",
+  ylab = "Residuals",
+  main = names(f)[1]
+)
+abline(h = 0, col = "tomato2")
+qqnorm(residuals(f[[1]]))
+qqline(residuals(f[[1]]))
+
+plot(
+  fitted(f[[2]]),
+  residuals(f[[2]]),
+  xlab = "Fitted values",
+  ylab = "Residuals",
+  main = names(f)[2]
+)
+abline(h = 0, col = "tomato2")
+qqnorm(residuals(f[[2]]))
+qqline(residuals(f[[2]]))
+```
+
+## Model-based group-wise analyses
+
+### Supplementary Figure 11: Statistical comparisons of anti-PEG IgG and IgM antibody responses between mRNA-1273 dosing intervals over control
+
+```{r}
+rg <- purrr::map(f, ref_grid)
+contrasts <-
+  purrr::map(rg, ~ contrast(.x, method = "dunnett", type = "response"))
+
+p <- imap(
+  contrasts,
+  ~ plot(.x) +
+    scale_x_continuous(
+      breaks = log2(c(0.75, 1, 2, 4, 8)),
+      labels = ~ 2 ^ .x) +
+    scale_y_discrete(
+      breaks = c(
+        "8 - PBS",
+        "6 - PBS",
+        "4 - PBS",
+        "3 - PBS",
+        "2 - PBS",
+        "1 - PBS",
+        "Prime Only - PBS"
+      ),
+      labels = c(
+        "8 / PBS",
+        "6 / PBS",
+        "4 / PBS",
+        "3 / PBS",
+        "2 / PBS",
+        "1 / PBS",
+        "Prime Only / PBS"
+      )
+    ) +
+    geom_vline(aes(xintercept = 0), col = "tomato2", linetype = 2) +
+    ggtitle(str_remove_all(.y, "anti-PEG | Concentration")) +
+    labs(x = "Fold change", y = "Contrast") +
+    theme_bw()
+)
+p_emgrid <- cowplot::plot_grid(plotlist = p,
+                               nrow = 1,
+                               ncol = 2)
+print(p_emgrid)
+```
+
+```{r echo = FALSE}
+cowplot::save_plot(plot = p_emgrid, filename = "figures_tables/antiPEG/antiPEG_contrasts.png", nrow = 1, ncol = 2)
+```
+
+### Supplementary Table 8: Anti-PEG *P*-value table for group mean comparisons
+
+```{r}
+#-------------------------------------------------------------------------------
+# Tables of P-values from mean comparisons
+#-------------------------------------------------------------------------------
+antipeg_p_table <-
+  imap_dfr(contrasts, ~ as_tibble(.x) %>% mutate(Antibody = .y)) %>%
+  mutate(
+    "Pairwise comparison" = str_replace(contrast, pattern = " - ", replacement = " / "),
+    .before = 1
+  ) %>%
+  dplyr::select(`Pairwise comparison`, Antibody, p.value) %>%
+  mutate(Antibody = str_remove_all(Antibody, "anti-PEG | Concentration"), ) %>%
+  rename("Adjusted P-value" = "p.value")
+DT::datatable(antipeg_p_table)
+```
+
+```{r echo = FALSE}
+writexl::write_xlsx(x = antipeg_p_table, path = "figures_tables/antiPEG/antipeg_pvals.xlsx")
+```
+
+## Session Information
+
+```{r}
+sessionInfo()
+```

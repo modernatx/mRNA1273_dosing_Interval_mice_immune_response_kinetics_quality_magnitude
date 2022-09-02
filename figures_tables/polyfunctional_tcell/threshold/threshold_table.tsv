@@ -1,0 +1,9 @@
+Cell population	Stimulation	Day	threshold
+CD4 T	S2	64	2.9e-4
+CD4 T	S2	87	9.42e-5
+CD4 T	S2	143	3.194e-4
+CD4 T	S2	226	8.580000000000001e-5
+CD8 T	S1	64	4e-4
+CD8 T	S1	87	0
+CD8 T	S1	143	1.9e-4
+CD8 T	S1	226	7.03e-5

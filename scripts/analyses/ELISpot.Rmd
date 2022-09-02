@@ -1,0 +1,710 @@
+---
+title: "ELISpot"
+date: "2022-08-15"
+output:
+  rmarkdown::html_document:
+    toc: yes
+    toc_depth: 3
+    toc_float: yes
+    theme: flatly
+    highlight: zenburn
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+knitr::opts_knit$set(root.dir = "../..")
+
+```
+
+## Load in libraries
+```{r}
+library(tidyverse)
+library(readxl)
+library(mgcv)
+library(emmeans)
+library(ggeffects)
+library(lme4)
+library(DT)
+library(ggpubr)
+library(cowplot)
+source("scripts/utils/utils.R")
+```
+
+## Load data
+```{r}
+# load ELISpot data
+temp <- read_excel("processed_data/ELISpot.xlsx")
+
+dp <- temp[!is.na(temp$counts), ] %>%
+  filter(`low cell number (<0.15M)`== "no",
+         day != "143")%>%
+  mutate(counts = counts + 0.001)
+
+d <-
+  dp %>%
+  filter(interval != "PBS")%>%
+  mutate(animal_id = factor(animal_id),
+         interval = factor(interval),
+         day = factor(day))
+```
+
+## Observed data visualization
+
+```{r, fig.width=12, fig.height=8}
+dp %>%
+  filter(interval != "PBS") %>%
+  mutate(interval = factor(interval, levels = c("PBS", 0:8))) %>%
+  mutate(
+    interval = forcats::fct_recode(
+      interval,
+      "8 weeks" = "8",
+      "6 weeks" = "6",
+      "4 weeks" = "4",
+      "3 weeks" = "3",
+      "2 weeks" = "2",
+      "1 week" = "1",
+      "Prime only" = "0"
+    )
+  ) %>%
+  mutate(day = forcats::fct_recode(factor(day), "day 64" = "64")) %>%
+  ggplot(aes(x = interval, y = counts)) +
+  geom_boxplot(outlier.shape = NA) +
+  scale_shape_manual(values = c(16, 5)) +
+  scale_y_log10(breaks = c(100, 500, 1000, 1500)) +
+  geom_jitter(aes(x = interval, y = counts)) +
+  stat_summary(
+    fun.min = mean,
+    fun = mean,
+    fun.max = mean,
+    color = "red",
+    width = .5,
+    geom = "errorbar",
+    size = 1
+  ) +
+  facet_wrap(tissue ~ coating, scales = "free") +
+  theme_bw() +  theme(panel.grid.major = element_line(colour = "grey100")) +
+  labs(
+    x = "",
+    y = "antigen specific \n ASC counts/million cells",
+    color = "",
+    linetype = "",
+    title = "Antigen specific spleen and BM results"
+  ) +
+  theme(
+    title = element_text(size = 14),
+    axis.text.x = element_text(
+      angle = 45,
+      hjust = 1,
+      vjust = 1
+    ),
+    axis.title = element_text(size = 14),
+    strip.text = element_text(size = 14),
+    legend.text = element_text(size = 14),
+    legend.title = element_text(size = 14),
+    plot.title = element_text(size = 14, face = "bold"),
+    legend.position = "bottom"
+  )
+```
+
+## Model fitting for spleen data
+
+```{r}
+#-------------------------------------------------------------------------------
+# Fit the model for spleen data 
+#-------------------------------------------------------------------------------
+# boxcox function to fit boxcox regression
+boxcox_fit <- function(dat) {
+  require(MASS)
+  if (length(unique(dat$day)) == 1) {
+    out <- boxcox(counts ~ interval, data = dat)
+    optimal <- out$x[which.max(out$y)]
+    bctran <- make.tran("boxcox", optimal)
+    lm_fit <- with(bctran,
+                   lm(linkfun(counts) ~ interval, data = dat))
+  } else{
+    out <- boxcox(counts ~ interval * day, data = dat)
+    optimal <- out$x[which.max(out$y)]
+    bctran <- make.tran("boxcox", optimal)
+    lm_fit <- with(bctran,
+                   lm(linkfun(counts) ~ interval * day, data = dat))
+  }
+  return(list(lm_fit = lm_fit, lambda = optimal))
+}
+
+# box cox model fit for spleen data
+d_tissue <- subset(d, tissue == "spleen") %>%
+  filter(!(coating == "NTD" & interval == "0"))
+
+boxcox_fits <-
+  d_tissue %>%
+  split(.$coating) %>%
+  map( ~ boxcox_fit(.x))
+
+lm_fits <-
+  purrr::transpose(boxcox_fits)$lm_fit
+
+# obtain optimal lambda for boxcox transformation
+lambdas <-
+  purrr::transpose(boxcox_fits)$lambda %>% unlist()
+
+assumption_plots <-
+  imap(
+    lm_fits ,
+    ~ assumption_check(.x) %>%
+      plot_grid(
+        ggdraw() + draw_label(paste0("Spleen ", .y, "-specific model residual diagnostics "),
+                              x = 0.03,
+                              hjust = 0),
+        .,
+        ncol = 1,
+        rel_heights = c(0.1, 1),
+        align = "v"
+      )
+  )
+
+# obtain emmeans
+lm_grid <- ref_grid(lm_fits$S2P, cov.keep = c("interval", "day"))
+emmt_dat <-
+  emmeans(lm_grid, specs = ~ interval, type = "response") %>%
+  as_tibble()
+
+```
+
+### Residual diagnostics for spleen data
+
+```{r, fig.width = 12, fig.height = 6}
+ggarrange(plotlist = assumption_plots)
+```
+
+### Figure 4A. Spike-specific Antibody Secreting Cells and Long-Lived Plasma Cells
+
+```{r, fig.height=8}
+#-------------------------------------------------------------------------------
+# Figure 4A. Spike-specific Antibody Secreting Cells and Long-Lived Plasma Cells.
+#-------------------------------------------------------------------------------
+# fold change figure 
+foldchange1 <-
+  emmt_dat %>%
+  mutate(
+    interval = forcats::fct_recode(
+      interval,
+      "8 weeks" = "8",
+      "6 weeks" = "6",
+      "4 weeks" = "4",
+      "3 weeks" = "3",
+      "2 weeks" = "2",
+      "1 week" = "1",
+      "Prime only" = "0"
+    )
+  ) %>%
+  ggplot(aes(x = interval , y = response)) +
+  geom_point(position = position_dodge(width = 0.5), size = 2)  +
+  geom_errorbar(
+    aes(ymin = lower.CL, ymax = upper.CL),
+    width = .1,
+    position = position_dodge(width = 0.5),
+    size = 1
+  ) +
+  scale_color_manual(values = c(
+    "#8d68ca",
+    "#64a758",
+    "#c85994",
+    "#b6933f",
+    "#609bce",
+    "#ca5c49"
+  )) +
+  theme_bw() +  theme(panel.grid.major = element_line(colour = "grey100")) +
+  scale_y_log10(breaks = c(100, 500, 1000, 1600)) +
+  ggtitle("S2P specific spleen day 64") +
+  labs(x = "", y = "Estimated ASC counts/million cells") +
+  geom_hline(yintercept = emmt_dat$lower.CL[c(6, 7)],
+             color = "darkcyan",
+             lty = "dashed") +
+  theme(
+    axis.text = element_text(size = 12),
+    axis.text.x = element_text(
+      angle = 45,
+      hjust = 1,
+      vjust = 1
+    ),
+    axis.title = element_text(size = 14),
+    strip.text = element_text(size = 10),
+    legend.text = element_text(size = 14),
+    legend.title = element_text(size = 14),
+    plot.title = element_text(size = 14, face = "bold"),
+    panel.spacing = unit(0, "lines")
+  )
+
+# boxplot
+box1 <-
+  dp %>%
+  filter(interval != "PBS", tissue == "spleen", coating == "S2P") %>%
+  mutate(interval = factor(interval, levels = c("PBS", 0:8))) %>%
+  mutate(
+    interval = forcats::fct_recode(
+      interval,
+      "8 weeks" = "8",
+      "6 weeks" = "6",
+      "4 weeks" = "4",
+      "3 weeks" = "3",
+      "2 weeks" = "2",
+      "1 week" = "1",
+      "Prime only" = "0"
+    )
+  ) %>%
+  mutate(day = forcats::fct_recode(factor(day), "day 64" = "64")) %>%
+  ggplot(aes(x = interval, y = counts)) +
+  geom_boxplot(outlier.shape = NA) +
+  scale_shape_manual(values = c(16, 5)) +
+  scale_y_log10(breaks = c(100, 500, 1000, 1500)) +
+  geom_jitter(aes(x = interval, y = counts)) +
+  stat_summary(
+    fun.min = mean,
+    fun = mean,
+    fun.max = mean,
+    color = "red",
+    width = .5,
+    geom = "errorbar",
+    size = 1
+  ) +
+  theme_bw() +  theme(panel.grid.major = element_line(colour = "grey100")) +
+  labs(
+    x = "",
+    y = "antigen specific \n ASC counts/million cells",
+    color = "",
+    linetype = "",
+    title = "S2P specific spleen day 64 (1wk post-boost) results"
+  ) +
+  scale_color_manual(values = c(
+    "#6496cd",
+    "#cb6939",
+    "#8264cb",
+    "#60a75c",
+    "#c361aa",
+    "#ad963e",
+    "#cc566a"
+  )) +
+  theme(
+    axis.text = element_text(size = 12),
+    title = element_text(size = 14),
+    axis.text.x = element_text(
+      angle = 45,
+      hjust = 1,
+      vjust = 1
+    ),
+    axis.title = element_text(size = 14),
+    strip.text = element_text(size = 14),
+    legend.text = element_text(size = 14),
+    legend.title = element_text(size = 14),
+    plot.title = element_text(size = 14, face = "bold"),
+    legend.position = "bottom"
+  )
+
+
+cowplot::plot_grid(plotlist = list( box1, foldchange1 ), nrow = 2, ncol = 1)
+```
+
+
+
+### Supplementary Table 3. Statistical comparisons of S2-P–specific ASCs 1 week following dose 2 between mRNA-1273 (10 μg) dosing intervals.
+```{r}
+#-------------------------------------------------------------------------------
+# Supplementary Table 3
+#-------------------------------------------------------------------------------
+emm_elispot <-
+  emmeans(ref_grid(lm_fits$S2P, cov.keep = c("interval", "day")),
+          specs = ~ interval,
+          type = "response")
+
+set.seed(100)
+sum_elispot <-
+  contrast(
+    regrid(emm_elispot, transform = "log10"),
+    "pairwise",
+    infer = TRUE,
+    adjust = "mvt",
+    ratio = FALSE,
+    level = .95
+  ) %>% as_tibble() %>%
+  bind_rows()
+
+sum_elispot  %>%
+  as_tibble() %>%
+  dplyr::select(contrast, estimate, p.value) %>%
+  filter(p.value < 0.05) %>%
+  mutate(estimate = 10 ^ estimate) %>%
+  mutate(contrast = str_replace(contrast, " - ", " / ")) %>%
+  rename(
+    "Pairwise comparison" = contrast,
+    "Fold change" = "estimate",
+    "Adjusted P-value" = "p.value"
+  ) %>%
+  DT::datatable(caption = "Statistical comparisons of S2-P–specific ASCs 1 week following dose 2 between mRNA-1273 (10 μg) dosing interval") %>%
+  formatSignif(columns = c('Fold change', 'Adjusted P-value'),
+               digits = 7)
+
+
+# Supplementary Table 3 visualization
+t3v <-
+sum_elispot %>%
+  as_tibble() %>%
+  mutate(contrast = str_replace(contrast, " - ", " / "),
+         contrast = str_remove_all(contrast, "interval")) %>%
+  mutate(day = "Day 64 (1wk post-boost)")%>%
+  rename(
+    "Pairwise comparison" = contrast,
+    "Fold change" = "estimate",
+    "Adjusted P-value" = "p.value",
+  ) %>%
+  mutate(`Pairwise comparison` = str_remove_all(`Pairwise comparison` , "interval")) %>%
+  ggplot(aes(x = `Pairwise comparison` , y = `Fold change`)) +
+  geom_point(size = 3)  +
+  geom_errorbar(aes(ymin = lower.CL, ymax = upper.CL),
+                width = .1,
+                #position = position_dodge(width = 2),
+                size = 1) +
+  scale_color_manual(
+    values = c(
+      "#ABCFE5",
+      "#93C4DE",
+      "#78B5D8",
+      "#60A6D1",
+      "#4A97C9",
+      "#3787C0",
+      "#2575B7",
+      "#1664AB",
+      "#09539D",
+      "#084185"
+    )
+  ) +
+  theme_bw() +  theme(panel.grid.major = element_line(colour = "grey100")) +
+  scale_y_continuous(breaks = log10(c(0.1, 0.2, 0.5, 1, 2, 3)),
+                     labels = c("1/10", "1/5", "1/2", 1, 2, 3)) +
+  facet_grid(~day) +
+  geom_hline(yintercept = 0,
+             color = "darkcyan",
+             lty = "dashed") +
+  labs(
+    title = "Estimated fold change of S2-P–specific ASCs",
+    #subtitle = "1 week following dose 2 between mRNA-1273 (10 μg) dosing interval",
+    x = "",
+    y = ""
+  ) +
+  coord_flip() +
+  theme(
+    axis.text = element_text(size = 12),
+    axis.title = element_text(size = 12),
+    strip.text = element_text(size = 10),
+    legend.text = element_text(size = 14),
+    legend.title = element_text(size = 14),
+    plot.title = element_text(size = 14, face = "bold"),
+    panel.spacing = unit(0, "lines")
+  )
+
+
+```
+
+## Model fitting for BM data
+```{r}
+#-------------------------------------------------------------------------------
+# Fit the model for BM data 
+#-------------------------------------------------------------------------------
+# BM 
+d_bm <- subset(d, tissue == "BM")
+
+boxcox_fits <-
+  d_bm %>%
+  split(.$coating) %>%
+  map( ~ boxcox_fit(.x))
+
+lm_fits <-
+  purrr::transpose(boxcox_fits)$lm_fit
+
+# obtain emmeans
+lm_grid <- ref_grid(lm_fits$S2P, cov.keep = c("interval", "day"))
+emmt_dat <-
+  emmeans(lm_grid, specs = ~ interval | day, type = "response") %>%
+  as_tibble()
+
+```
+
+### Residual diagnostics for BM data
+```{r, fig.width = 12, fig.height = 6}
+assumption_plots <-
+  imap(
+    lm_fits ,
+    ~ assumption_check(.x) %>%
+      plot_grid(
+        ggdraw() + draw_label(
+          paste0("BM ", .y, "-specific model residual diagnostics "),
+          x = 0.03,
+          hjust = 0
+        ),
+        .,
+        ncol = 1,
+        rel_heights = c(0.1, 1),
+        align = "v"
+      )
+  )
+ggarrange(plotlist = assumption_plots)
+```
+
+### Figure 4B. Spike-specific Antibody Secreting Cells and Long-Lived Plasma Cells
+
+```{r, fig.height=8}
+#-------------------------------------------------------------------------------
+# Figure 4B. Spike-specific Antibody Secreting Cells and Long-Lived Plasma Cells.
+#-------------------------------------------------------------------------------
+foldchange2 <-
+  emmt_dat %>%
+  mutate(
+    interval = forcats::fct_recode(
+      interval,
+      "8 weeks" = "8",
+      "6 weeks" = "6",
+      "4 weeks" = "4",
+      "3 weeks" = "3",
+      "2 weeks" = "2",
+      "1 week" = "1",
+      "Prime only" = "0"
+    )
+  ) %>%
+  mutate(
+    day = forcats::fct_recode(
+      factor(day),
+      "Day 87 (4wk post-boost)" = "87",
+      "Day 227 (24wk post-boost)" = "226"
+    )
+  ) %>%
+  mutate(day = factor(day, c(
+    "Day 87 (4wk post-boost)" , "Day 227 (24wk post-boost)"
+  ))) %>%
+  ggplot(aes(x = interval , y = response)) +
+  geom_point(position = position_dodge(width = 0.5), size = 2)  +
+  geom_errorbar(
+    aes(ymin = lower.CL, ymax = upper.CL),
+    width = .1,
+    position = position_dodge(width = 0.5),
+    size = 1
+  ) +
+  theme_bw() +  theme(panel.grid.major = element_line(colour = "grey100")) +
+  scale_y_log10(breaks = c(100, 500, 1000, 1600)) +
+  ggtitle("S2P specific Bone Marrow results") +
+  labs(x = "", y = "Estimated ASC counts/million cells") +
+  geom_hline(yintercept = emmt_dat$lower.CL[c(6)],
+             color = "darkcyan",
+             lty = "dashed") +
+  geom_hline(yintercept = emmt_dat$lower.CL[c(13)],
+             color = "darkcyan",
+             lty = "dashed") +
+  facet_grid( ~ day) +
+  theme(
+    axis.text = element_text(size = 12),
+    axis.text.x = element_text(
+      angle = 45,
+      hjust = 1,
+      vjust = 1
+    ),
+    axis.title = element_text(size = 14),
+    strip.text = element_text(size = 10),
+    legend.text = element_text(size = 14),
+    legend.title = element_blank(),
+    plot.title = element_text(size = 14, face = "bold"),
+    panel.spacing = unit(0, "lines")
+  )
+
+box2 <-
+  dp %>%
+  filter(interval != "PBS", tissue == "BM", coating == "S2P") %>%
+  mutate(interval = factor(interval, levels = c("PBS", 0:8))) %>%
+  mutate(
+    interval = forcats::fct_recode(
+      interval,
+      "8 weeks" = "8",
+      "6 weeks" = "6",
+      "4 weeks" = "4",
+      "3 weeks" = "3",
+      "2 weeks" = "2",
+      "1 week" = "1",
+      "Prime only" = "0"
+    )
+  ) %>%
+  mutate(
+    day = forcats::fct_recode(
+      factor(day),
+      "Day 87 (4wk post-boost)" = "87",
+      "Day 227 (24wk post-boost)" = "226"
+    )
+  ) %>%
+  mutate(day = factor(
+    day,
+    levels = c("Day 87 (4wk post-boost)", "Day 227 (24wk post-boost)")
+  )) %>%
+  ggplot(aes(x = interval, y = counts)) +
+  geom_boxplot(outlier.shape = NA) +
+  scale_shape_manual(values = c(16, 5)) +
+  scale_y_log10(breaks = c(100, 500, 1000, 1600)) +
+  geom_jitter(aes(x = interval, y = counts)) +
+  stat_summary(
+    fun.min = mean,
+    fun = mean,
+    fun.max = mean,
+    color = "red",
+    width = .5,
+    geom = "errorbar",
+    size = 1
+  ) +
+  theme_bw() +  theme(panel.grid.major = element_line(colour = "grey100")) +
+  labs(
+    x = "",
+    y = "antigen specific \n ASC counts/million cells",
+    color = "",
+    linetype = "",
+    title = "S2P specific Bone Marrow results"
+  ) +
+  facet_grid( ~ day) +
+  theme(
+    axis.text = element_text(size = 12),
+    title = element_text(size = 14),
+    axis.text.x = element_text(
+      angle = 45,
+      hjust = 1,
+      vjust = 1
+    ),
+    axis.title = element_text(size = 14),
+    strip.text = element_text(size = 14),
+    legend.text = element_text(size = 14),
+    legend.title = element_text(size = 14),
+    plot.title = element_text(size = 14, face = "bold"),
+    legend.position = "bottom"
+  )
+```
+
+### Supplementary Table 4. Statistical comparisons of S2-P–specific LLPCs 4 weeks following dose 2 (Day 87) and 24 weeks following dose 2 (Day 227) between mRNA-1273 (10 μg) dosing intervals.
+```{r}
+#-------------------------------------------------------------------------------
+# Supplementary Table 4
+#-------------------------------------------------------------------------------
+emm_elispot_BM <-
+  emmeans(ref_grid(lm_fits$S2P, cov.keep = c("interval", "day")),
+          specs = ~ interval |
+            day,
+          type = "response")
+
+set.seed(100)
+emm_elispot_BM <-
+  contrast(
+    regrid(emm_elispot_BM , transform = "log10"),
+    "pairwise",
+    infer = TRUE,
+    adjust = "mvt",
+    ratio = FALSE,
+    level = .95
+  ) %>% as_tibble() %>%
+  bind_rows()
+
+emm_elispot_BM %>%
+  as_tibble() %>%
+  dplyr::select(day, contrast, estimate, p.value) %>%
+  filter(p.value < 0.05) %>%
+  mutate(day = as.numeric(as.character(day))) %>%
+  arrange(day) %>%
+  mutate(estimate = 10 ^ estimate) %>%
+  mutate(contrast = str_replace(contrast, " - ", " / ")) %>%
+  rename(
+    "Pairwise comparison" = contrast,
+    "Fold change" = "estimate",
+    "Adjusted P-value" = "p.value",
+    "Day" = "day"
+  ) %>%
+  DT::datatable(
+    caption = "Statistical comparisons of S2-P–specific LLPCs 4 weeks following
+                dose 2 (Day 87) and 24 weeks following dose 2 (Day 227) between mRNA-1273
+                (10 μg) dosing intervals"
+  ) %>%
+  formatSignif(columns = c('Fold change', 'Adjusted P-value'),
+               digits = 7)
+
+```
+
+
+### Supplementary Figure 5. Statistical comparisons of S2-P-specific Antibody Secreting Cells and Long-Lived Plasma Cells between mRNA-1273 (10 µg) dosing intervals(Supplementary Table 3 and 4 visualization)
+```{r, fig.width = 16, fig.height=8}
+t4v <-
+  emm_elispot_BM %>%
+  as_tibble() %>%
+  mutate(contrast = str_replace(contrast, " - ", " / "),
+         contrast = str_remove_all(contrast, "interval")) %>%
+  mutate(day = factor(day, levels = c(87, 226))) %>%
+  mutate(
+    day = forcats::fct_recode(
+      day,
+      "Day 87 (4wk post-boost)" = "87",
+      "Day 227 (24wk post-boost)" = "226",
+    )
+  ) %>%
+  rename(
+    "Pairwise comparison" = contrast,
+    "Fold change" = "estimate",
+    "Adjusted P-value" = "p.value",
+  ) %>% 
+  mutate(`Pairwise comparison` = str_remove_all(`Pairwise comparison` , "interval")) %>%
+  ggplot(aes(x = `Pairwise comparison` , y = `Fold change`)) +
+  geom_point(size = 3)  +
+  geom_errorbar(aes(ymin = lower.CL, ymax = upper.CL),
+                width = .1,
+                #position = position_dodge(width = 2),
+                size = 1) +
+  scale_color_manual(
+    values = c(
+      "#ABCFE5",
+      "#93C4DE",
+      "#78B5D8",
+      "#60A6D1",
+      "#4A97C9",
+      "#3787C0",
+      "#2575B7",
+      "#1664AB",
+      "#09539D",
+      "#084185"
+    )
+  ) +
+  theme_bw() +  theme(panel.grid.major = element_line(colour = "grey100")) +
+  scale_y_continuous(breaks = log10(c(0.1, 0.2, 0.5, 1, 2, 3)),
+                     labels = c("1/10", "1/5", "1/2", 1, 2, 3)) +
+  geom_hline(yintercept = 0,
+             color = "darkcyan",
+             lty = "dashed") +
+  facet_grid( ~ day) +
+  labs(title = "Estimated fold change of S2-P–specific LLPC",
+       # subtitle = "4 weeks following dose 2 (Day 87) and 24 weeks following dose 2 (Day 227)
+       # between mRNA-1273 (10 μg) dosing intervals",
+       x = "",
+       y = "") +
+  coord_flip() +
+  theme(
+    axis.text = element_text(size = 12),
+    axis.title = element_text(size = 12),
+    strip.text = element_text(size = 10),
+    legend.text = element_text(size = 14),
+    legend.title = element_text(size = 14),
+    plot.title = element_text(size = 14, face = "bold"),
+    panel.spacing = unit(0, "lines")
+  )
+
+cowplot::plot_grid(
+  plotlist = list(t3v, t4v),
+  labels = c("A", "B"),
+  nrow = 1,
+  ncol = 2,
+  rel_widths = c(0.5, 1)
+)
+#ggsave(filename = "figures_tables/ELISpot/emmeans_BM_spleen.png", width = 16, height=8)
+```
+
+## Session information
+
+```{r}
+sessionInfo()
+```
+

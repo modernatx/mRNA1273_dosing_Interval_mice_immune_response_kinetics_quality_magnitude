@@ -1,0 +1,493 @@
+---
+title: "T cell Polyfunctionality"
+output:
+  rmarkdown::html_document:
+    toc: yes
+    toc_depth: 3
+    toc_float: yes
+    theme: flatly
+    highlight: zenburn
+date: "2022-08-07"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+knitr::opts_knit$set(root.dir = "../..")
+```
+
+## Load in libraries
+
+```{r, results = 'hide'}
+#-------------------------------------------------------------------------------
+# ANALYSIS OF T CELL POLYFUNCTIONALITY DATA
+#-------------------------------------------------------------------------------
+library(tidyverse)
+library(gamlss)
+library(emmeans)
+library(RColorBrewer)
+library(cowplot)
+library(writexl)
+library(DT)
+map <- purrr::map
+
+# functions to run EM for choosing threshold
+source("scripts/utils/normal_beta_em_utils.R")
+source("scripts/utils/utils.R")
+modernacolors()
+```
+
+## Read in and process dataset
+
+```{r}
+set.seed(43210)
+d <- readxl::read_xlsx("processed_data/polyfunctional_tcell.xlsx") %>%
+  dplyr::filter(!str_detect(Stimulation, "PMA")) %>%
+  dplyr::filter(!is.na(dose) & dose > 0)
+```
+
+## Data thresholding
+
+As described in the *Statistical Methods* materials, we first need to threshold the polyfunctional T cell data, in order to capture data from the null (i.e., truly zero) and non-null (i.e., some positive proportion of polyfunctional cells in the sample) populations. This is done using a normal-beta mixture model, where the normal distribution, centered at 0, captures the null component, and the beta distribution captures the non-null component.
+
+### About preprocessing
+
+Note that we are reporting "Aggregate composition." This means, among the 3 cytokines we are studying, we are agnostic to which ones are positively expressed. We are only looking for the number of positively expressed cytokines. So, we sum across compositions that are single producers, and sum across compositions that are dual producers, to generate an "aggregate composition" of single and dual producers.
+
+### Threshold estimation
+
+The below script estimates these models within each relevant Stimulations/Cell population group. The resulting parameter estimates are displayed. `prop0` is the mixing proportion of the null population. `mu` and `sigma` are the mean and standard deviation of the normal component. `shape1` and `shape2` and the shape parameters of the beta distribution.
+
+```{r}
+#-------------------------------------------------------------------------------
+# Estimate a distribution for background and signal data using a normal-beta
+# mixture model. This is motivated by the SPICE paper. Estimation is done for
+# cell type/day specific data. Do estimation using the EM algorithm.
+#-------------------------------------------------------------------------------
+spl <- group_split(d, cell_population, day) %>%
+  purrr::map(~ {
+    if(.x$cell_population[1] == "CD4 T") {
+      dplyr::filter(.x, Stimulation == "S2")
+    } else if(.x$cell_population[1] == "CD8 T") {
+      dplyr::filter(.x, Stimulation == "S1")
+    }
+  })
+names(spl) <-
+  unlist(group_keys(group_by(d, cell_population, day)) %>% unite(col = nm))
+em_fits <-
+  purrr::map(spl,
+             ~ fit_beta_normal_mixture(.x$agg_composition, mu_equal_zero = TRUE))
+
+purrr::imap_dfr(em_fits,
+                ~ as_tibble(.x$parameters) %>% mutate(nm = .y, .before = 1)) %>%
+  separate(nm, c("Cell population", "Stimulation"), sep = "_") %>%
+  knitr::kable()
+```
+
+### Thresholding visualizations
+
+We define the threshold as the point at which observations have over a 95% chance of belonging to the non-null component, based on the model fit. The below plots visualize the estimated threshold (purple dashed line), as well as the histogram of fitted and observed models.
+
+```{r, fig.width = 16, fig.height = 6}
+#-------------------------------------------------------------------------------
+# Plot estimated mixture distribution vs. the real data
+# Calculate model-driven threshold in the process
+# Keep as non-zero the observations which have >= 95% chance of belonging to
+#   the signal distribution. This is motivated as the appropriate threshold for
+#   smaller datasets in the SPICE paper.
+#-------------------------------------------------------------------------------
+mixture_density_plots <- list()
+for (i in seq_along(spl)) {
+  sim <-
+    sample(
+      0:1,
+      replace = TRUE,
+      size = 10000,
+      prob = c(em_fits[[i]]$parameters$prop0, 1 - em_fits[[i]]$parameters$prop0)
+    ) %>%
+    tibble(sim_dat = c(
+      rbeta(
+        n = sum(. == 1),
+        shape1 = em_fits[[i]]$parameters$shape1,
+        shape2 = em_fits[[i]]$parameters$shape2
+      ),
+      rnorm(
+        n = sum(. == 0),
+        mean = em_fits[[i]]$parameters$mu,
+        sd = em_fits[[i]]$parameters$sigma
+      )
+    ),
+    group = c(rep("non-zero", sum(. == 1)), rep("zero", sum(. == 0)))) %>%
+    dplyr::select(-1)
+  
+  thresh <-
+    dplyr::filter(spl[[i]], em_fits[[i]]$z[, "non-zero"] >= .95) %>%
+    pull(agg_composition) %>%
+    min()
+  spl[[i]] <- mutate(spl[[i]], thresh = thresh)
+  
+  mixture_density_plots[[i]] <-
+    ggplot(spl[[i]], aes(x = agg_composition, y = ..density..)) +
+    geom_histogram(
+      color = "grey40",
+      fill = "white",
+      bins = 20,
+      size = 1.1
+    ) +
+    geom_density(
+      data = filter(sim, group == "zero"),
+      aes(
+        x = sim_dat,
+        y = ..density.. * em_fits[[i]]$parameters$prop0,
+        color = group,
+        fill = group,
+        group = group
+      ),
+      alpha = 0.3,
+      size = 1.1
+    ) +
+    geom_density(
+      data = filter(sim, group == "non-zero"),
+      aes(
+        x = sim_dat,
+        y = ..density.. * (1 - em_fits[[i]]$parameters$prop0),
+        color = group,
+        fill = group,
+        group = group
+      ),
+      alpha = 0.3,
+      size = 1.1
+    ) +
+    scale_fill_manual(values = c(modernalightgray, modernared)) +
+    scale_color_manual(values = c(modernalightgray, modernared)) +
+    geom_vline(
+      aes(xintercept = thresh),
+      color = modernapurple,
+      size = 1.2,
+      linetype = "twodash"
+    ) +
+    labs(
+      y = "",
+      x = "Aggregate composition",
+      fill = "Estimated\ndistribution",
+      color = "Estimated\ndistribution"
+    ) +
+    ggtitle(paste0(
+      spl[[i]]$cell_population[1],
+      " cells, Day ",
+      spl[[i]]$day[1],
+      ", ",
+      spl[[i]]$Stimulation[1]
+    )) +
+    theme_minimal()
+}
+leg <- cowplot::get_legend(mixture_density_plots[[1]])
+mixture_density_plots <-
+  map(mixture_density_plots, ~ .x + theme(legend.position = "none"))
+pgrid <-
+  cowplot::plot_grid(plotlist = mixture_density_plots,
+                     nrow = 2,
+                     ncol = 4)
+pgrid_out <-
+  cowplot::plot_grid(
+    pgrid,
+    leg,
+    nrow = 1,
+    ncol = 2,
+    rel_widths = c(10, 1)
+  )
+print(pgrid_out)
+```
+
+```{r echo = FALSE}
+cowplot::save_plot(
+  filename = "figures_tables/polyfunctional_tcell/threshold/betanormalmixture.png",
+  plot = pgrid_out,
+  ncol = 4,
+  nrow = 2
+)
+```
+
+The estimated thresholds for each cell population/stimulation combination are displayed below.
+
+```{r}
+#-------------------------------------------------------------------------------
+# Table of thresholds 
+#-------------------------------------------------------------------------------
+# Extract mixture model thresholds
+threshd_mix <- bind_rows(spl) %>%
+  mutate(
+    thresh_agg_composition = case_when(
+      agg_composition < thresh ~ 0,
+      agg_composition >= thresh ~ agg_composition
+    )
+  )
+
+thresh_table <-
+  dplyr::select(threshd_mix, cell_population, Stimulation, day, thresh) %>%
+  arrange(cell_population, Stimulation, day) %>%
+  distinct() %>%
+  setNames(c("Cell population", "Stimulation", "Day", "threshold"))
+
+knitr::kable(thresh_table)
+```
+
+```{r echo = FALSE}
+write_tsv(thresh_table, file = "figures_tables/polyfunctional_tcell/threshold/threshold_table.tsv")
+```
+
+## Thresholded data visualization
+
+### Supplementary Figure 8: Animal-level Spike-specific CD4+ and CD8+ T-Cell Responses
+
+```{r, fig.width=12, fig.height = 4}
+#-------------------------------------------------------------------------------
+# Boxplots of aggregate composition across weeks post dose, by day
+#-------------------------------------------------------------------------------
+p_boxplot2 <- group_split(threshd_mix, cell_population) %>%
+  purrr::map(
+    ~ ggplot(.x, aes(x = weeks_post_dose, y = thresh_agg_composition, group = interaction(factor(num_positive), weeks_post_dose))) +
+      geom_boxplot(aes(color = factor(num_positive)), outlier.shape = NA) +
+      geom_jitter(aes(color = factor(num_positive)), position = position_jitterdodge(), pch = 21) +
+      scale_color_manual(values = c(modernaorange, modernablue, modernapurple, modernagreen)) +
+      scale_y_continuous(trans = "sqrt") +
+      facet_grid(day ~ Stimulation,
+                 labeller = labeller("day" = function(.x) paste0("Day ", .x))) +
+      labs(x = "Weeks post dose", y = "Aggregate composition", title = paste0(.x$cell_population[1], " cells"), color = "# positive") +
+      theme_bw()
+  ) 
+walk(p_boxplot2, print)
+```
+
+```{r, echo = FALSE}
+cowplot::plot_grid(plotlist = p_boxplot2, nrow = 2) %>%
+  cowplot::save_plot(filename = "figures_tables/polyfunctional_tcell/polyfunctional_tcell_animal_level_dotplot.pdf", nrow = 2)
+```
+
+### Figure 5: Aggregate trend in T cell polyfunctionality by cell population and peptide pool
+
+```{r, fig.width=10, fig.height=4}
+#-------------------------------------------------------------------------------
+# Stacked bar charts of average (across mice within group) aggregate composition
+#   across weeks post dose
+#-------------------------------------------------------------------------------
+barp <- threshd_mix %>%
+  group_split(cell_population, group, weeks_post_dose, day, Stimulation, num_positive) %>%
+  map_dfr(~ mutate(.x, agg_composition=mean(agg_composition), mouse_id = NULL) %>% distinct()) %>%
+  group_split(cell_population) %>%
+  purrr::map(
+    ~ ggplot(.x, aes(x = weeks_post_dose, y = thresh_agg_composition, group = interaction(factor(num_positive), weeks_post_dose))) +
+      geom_bar(aes(fill = factor(num_positive)), position = "stack", stat = "identity") +
+      scale_fill_manual(values = brewer.pal(n = 9, "BuGn")[c(4,6,9)]) +
+      facet_grid(day ~ Stimulation,
+                 labeller = labeller("num_positive" = function(.x) paste0(.x, " positive"), "day" = function(.x) paste0("Day ", .x))) +
+      labs(x = "Weeks post dose", y = "Mean aggregate composition", title = paste0(.x$cell_population[1], " cells"), fill = "# positive") +
+      theme_bw()
+  )
+walk(barp, print)
+```
+
+```{r, echo = FALSE}
+cowplot::save_plot(
+  filename = "figures_tables/polyfunctional_tcell/stacked_barchart.pdf",
+  plot = cowplot::plot_grid(plotlist = barp),
+  nrow = 4,
+  ncol = 2,
+  base_width = 6, base_height = 1.5
+)
+```
+
+## Model-based group-wise analyses
+
+### Regression modeling
+
+We use a zero-inflated beta regression model to model the proportion of single, dual, and triple cytokine expressors. We fit models for CD4+ and CD8+ T cells, and for single, dual, and triple expressors separately, resulting in 6 total models.
+
+```{r, results = 'hide'}
+#-------------------------------------------------------------------------------
+# Multivariate mixed modeling
+#-------------------------------------------------------------------------------
+d4 <- filter(threshd_mix, cell_population == "CD4 T") %>%
+  mutate(agg_composition = NULL) %>%
+  pivot_wider(id_cols = everything(), names_from = "num_positive", values_from = "thresh_agg_composition") %>%
+  rename("one" = "1", "two" = "2", "three" = "3")
+d8 <- filter(threshd_mix, cell_population == "CD8 T") %>%
+  mutate(agg_composition = NULL) %>%
+  pivot_wider(id_cols = everything(), names_from = "num_positive", values_from = "thresh_agg_composition") %>%
+  rename("one" = "1", "two" = "2", "three" = "3")
+
+f4 <- purrr::map(c("one", "two", "three"), ~ {
+   if(.x == "one") {
+    form <- as.formula(paste0(.x, " ~ factor(day) * factor(weeks_post_dose)"))
+  } else {
+    form <- as.formula(paste0(.x, " ~ factor(day) + factor(weeks_post_dose)"))  
+  }
+  sigma_form <- as.formula("~ factor(weeks_post_dose)")
+  
+  gamlss::gamlss(
+    form,
+    sigma.formula = sigma_form,
+    family = BEZI,
+    data = d4,
+    trace = FALSE,
+    control = gamlss.control(n.cyc = 80, trace = FALSE),
+    i.control = glim.control(glm.trace = FALSE, bf.trace = FALSE)
+    )
+}) %>%
+  setNames(c("one", "two", "three"))
+
+f8 <- purrr::map(c("one", "two", "three"), ~ {
+  if(.x == "one") {
+    form <- as.formula(paste0(.x, " ~ factor(day) * factor(weeks_post_dose)"))
+  } else {
+    form <- as.formula(paste0(.x, " ~ factor(day) + factor(weeks_post_dose)"))  
+  }
+  
+  sigma_form <- as.formula("~ factor(weeks_post_dose)")
+  
+  gamlss::gamlss(
+    form,
+    sigma.formula = sigma_form,
+    family = BEZI,
+    data = d8,
+    trace = FALSE,
+    control = gamlss.control(n.cyc = 80, trace = FALSE),
+    i.control = glim.control(glm.trace = FALSE, bf.trace = FALSE)
+  )
+  
+}) %>%
+  setNames(c("one", "two", "three"))
+
+ds <- ls(pattern = "d[[:digit:]]") %>% lapply(function(x) eval(as.name(x)))
+names(ds) <- ls(pattern = "d[[:digit:]]")
+
+fits <- ls(pattern = "f[[:digit:]]") %>% lapply(function(x) eval(as.name(x)))
+names(fits) <- ls(pattern = "f[[:digit:]]")
+```
+
+### Diagnostics
+
+### Residual plots
+
+Since the data are modeled using a generalized linear model assuming a distribution that contains both discrete and continuous components, normalized randomized quantile residuals (RQRs) are used in residual diagnostic plots.
+
+```{r, fig.width = 6, fig.height = 8}
+par(mfrow = c(3,2))
+iwalk(f4, ~ {
+  plot(fitted(.x), residuals(.x), xlab = "Fitted values", ylab = "RQRs", main = paste0("Residual plots for CD4+ T cells with ", .y, "\ncytokine(s) expressed"))
+  abline(h = 0, col = "tomato2", lty = 2)
+  qqnorm(residuals(.x));
+  qqline(residuals(.x))
+  })
+```
+
+```{r, fig.width = 6, fig.height = 8}
+par(mfrow = c(3,2))
+iwalk(f8, ~ {
+  plot(fitted(.x), residuals(.x), xlab = "Fitted values", ylab = "RQRs", main = paste0("Residual plots for CD8+ T cells with ", .y, "\ncytokine(s) expressed"))
+  abline(h = 0, col = "tomato2", lty = 2)
+  qqnorm(residuals(.x));
+  qqline(residuals(.x))
+  })
+```
+
+### Supplementary Figures 9-10: Statistical comparisons of CD4+ and CD8+ T cell cytokine polyfunctionality
+
+```{r, fig.width = 11.8, fig.height = 3.85}
+#-------------------------------------------------------------------------------
+# Differences in consecutive dosing intervals
+#-------------------------------------------------------------------------------
+em_fits1 <- imap(fits, ~ {
+  lapply(.x, function(X) {
+    emmeans::emmeans(
+      ref_grid(X),
+      specs = ~ weeks_post_dose | day
+    ) %>%
+      contrast(method = "revpairwise", type = "response") %>%
+      confint(level = 0.95, adjust = "mvt")
+  })
+})
+names(em_fits1) <- names(fits)
+
+contrast_plots1 <- imap(em_fits1, ~ {
+  titles <- names(.x)
+  out <- list()
+  for(i in seq_along(titles)) {
+    out[[i]] <- plot(.x[[i]]) +
+      geom_vline(aes(xintercept = 1), linetype = "twodash", color = "red") +
+      facet_grid(~ day, labeller = labeller(day = function(.y) paste0("Day ", .y))) +
+      labs(x = "Odds ratio", y = "Contrast in dosing interval") +
+      ggtitle(paste0("CD", str_extract(.y, "[[:digit:]]"), " T cells, ", titles[i], " function(s)")) +
+      theme_bw()
+  }
+  out
+})
+
+walk(contrast_plots1, print)
+```
+
+```{r echo = FALSE}
+ggsave(filename = "figures_tables/polyfunctional_tcell/model/interval_CD4_one.png", plot = contrast_plots1$f4[[1]], width = 11.8, height = 3.85)
+ggsave(filename = "figures_tables/polyfunctional_tcell/model/interval_CD4_two.png", plot = contrast_plots1$f4[[2]], width = 11.8, height = 3.85)
+ggsave(filename = "figures_tables/polyfunctional_tcell/model/interval_CD4_three.png", plot = contrast_plots1$f4[[3]], width = 11.8, height = 3.85)
+
+ggsave(filename = "figures_tables/polyfunctional_tcell/model/interval_CD8_one.png", plot = contrast_plots1$f8[[1]], width = 11.8, height = 3.85)
+ggsave(filename = "figures_tables/polyfunctional_tcell/model/interval_CD8_two.png", plot = contrast_plots1$f8[[2]], width = 11.8, height = 3.85)
+ggsave(filename = "figures_tables/polyfunctional_tcell/model/interval_CD8_three.png", plot = contrast_plots1$f8[[3]], width = 11.8, height = 3.85)
+```
+
+### Supplementary Table 5: T cell polyfunctionality group comparison *P*-values
+
+```{r}
+#-------------------------------------------------------------------------------
+# Tables of P-values to go with the figure
+#-------------------------------------------------------------------------------
+em_tables <- imap(fits, ~ {
+  lapply(.x, function(X) {
+    emmeans::emmeans(
+      ref_grid(X),
+      specs = ~ weeks_post_dose | day
+    ) %>%
+      contrast(method = "revpairwise", type = "response", adjust = "mvt")
+  })
+})
+
+pvals <- imap_dfr(em_tables, ~ {
+  imap_dfr(.x, function(.xx, .yy) {
+    as_tibble(.xx) %>%
+      mutate(num_cytokines = .yy)
+  }) %>%
+    mutate(tcell = .y)
+}) %>%
+  dplyr::select(contrast, odds.ratio, day, tcell, num_cytokines, p.value) %>%
+  rename(
+    "Pairwise comparison" = "contrast",
+    "Odds ratio" = "odds.ratio",
+    "Day" = "day",
+    "Cell" = "tcell",
+    "# positive" = "num_cytokines",
+    "Adjusted P-value" = p.value
+  ) %>%
+  mutate(
+    Cell = case_when(
+      Cell == "f4" ~ "CD4+ T",
+      Cell == "f8" ~ "CD8+ T"
+      ),
+    `# positive` = case_when(
+      `# positive` == "one" ~ 1,
+      `# positive` == "two" ~ 2,
+      `# positive` == "three" ~ 3
+  )) %>%
+  filter(`Adjusted P-value` <= 0.05)
+
+DT::datatable(pvals)
+```
+
+```{r echo = FALSE}
+writexl::write_xlsx(pvals, path = "figures_tables/polyfunctional_tcell/model/cytokine_pvals.xlsx")
+```
+
+## Session Information
+
+```{r}
+sessionInfo()
+```

@@ -1,0 +1,616 @@
+---
+title: "ELISA"
+date: "2022-08-15"
+output:
+  rmarkdown::html_document:
+    toc: yes
+    toc_depth: 3
+    toc_float: yes
+    theme: flatly
+    highlight: zenburn
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+knitr::opts_knit$set(root.dir = "../..")
+
+```
+
+## Load in libraries
+```{r}
+library(tidyverse)
+library(readxl)
+library(mgcv)
+library(emmeans)
+library(ggeffects)
+library(lme4)
+library(formattable)
+library(ggpubr)
+library(pzfx)
+library(DT)
+library(cowplot)
+source("scripts/utils/utils.R")
+```
+
+## Load data
+```{r}
+# load data
+d <- read_excel("processed_data/ELISA.xlsx")
+```
+
+## Observed data visualization
+
+### Supplementary Figure 3. Impact of mRNA-1273 Prime-boost Interval on S2-P-specific Serum Binding IgG Antibody Titers Through 24 Weeks Post-boost
+```{r, fig.width = 16, fig.height = 16}
+#-------------------------------------------------------------------------------
+# Supplementary Figure 1
+#-------------------------------------------------------------------------------
+
+# color panel
+panel0 <-
+  c("#c85979",
+    "#6980ce",
+    "#4aac8d",
+    "#b460bd",
+    "#cd5d39",
+    "#b49541",
+    "#4ab0aa")
+dosepanel <- c("#cb6939", "#8264cb")
+LLOQ <- 25  # lower limit of quantificatin
+
+
+# trend over time
+raw1 <-
+d %>%
+  filter(interval != "PBS") %>%
+  mutate(interval = factor(interval)) %>%
+  mutate(
+    .,
+    interval = forcats::fct_recode(
+      interval,
+      "8 weeks" = "8",
+      "6 weeks" = "6",
+      "4 weeks" = "4",
+      "3 weeks" = "3",
+      "2 weeks" = "2",
+      "1 week" = "1",
+      "prime only" = "0"
+    )
+  ) %>%
+  mutate(., interval = factor(.$interval, levels = levels(.$interval)[8:1])) %>%
+  mutate(
+    day = forcats::fct_recode(
+      factor(day),
+      "Day 56 \n (Prime)" = "56",
+      "Day 64 \n (1wk post-boost)" = "64",
+      "Day 73 \n (2wk post-boost)" = "73",
+      "Day 87 \n (4wk post-boost)" = "87",
+      "Day 115 \n (8wk post-boost)" = "115",
+      "Day 143 \n (12wk post-boost)" = "143",
+      "Day 171 \n (16wk post-boost)" = "171",
+      "Day 199 \n (20wk post-boost)" = "199",
+      "Day 227 \n (24wk post-boost)" = "226"
+    )
+  ) %>%
+  mutate(dose = forcats::fct_recode(factor(dose), "1ug" = "1", "10ug" = "10")) %>%
+  ggplot(aes(
+    x = factor(day),
+    y = value,
+    color = factor(interval)
+  )) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(position = position_jitterdodge(jitter.width = .2)) +
+  geom_hline(aes(yintercept = log10(LLOQ), lty = "LLOQ")) +
+  scale_linetype_manual(values = 2) +
+  facet_wrap(~ dose, nrow = 3) +
+  theme_bw() +  theme(panel.grid.major = element_line(colour = "grey100")) +
+  labs(
+    x = " ",
+    y = expression(log[10] ~ S2P ~ IgG ~ titer),
+    color = "",
+    linetype = ""
+  ) +
+  scale_color_manual(values = panel0) +
+  scale_y_continuous(breaks = 1:7) +
+  theme(
+    axis.text = element_text(size = 12),
+    axis.title = element_text(size = 16),
+    axis.text.x = element_text(
+      angle = 45,
+      hjust = 1,
+      vjust = 1
+    ),
+    strip.text = element_text(size = 14),
+    legend.text = element_text(size = 14),
+    legend.title = element_text(size = 16)
+  )
+
+# animal-level line plot
+raw2 <-
+d %>%
+  filter(interval != "PBS") %>%
+  mutate(
+    interval = factor(interval),
+    animal_id = paste("animal", animal_id),
+    animal_id = factor(
+      animal_id,
+      levels = c(
+        "animal 1",
+        "animal 2",
+        "animal 3",
+        "animal 4",
+        "animal 5",
+        "animal 6",
+        "animal 7",
+        "animal 8",
+        "animal 9",
+        "animal 10"
+      )
+    )
+  ) %>%
+  mutate(
+    .,
+    interval = forcats::fct_recode(
+      interval,
+      "8 weeks" = "8",
+      "6 weeks" = "6",
+      "4 weeks" = "4",
+      "3 weeks" = "3",
+      "2 weeks" = "2",
+      "1 weeks" = "1",
+      "prime only" = "0"
+    )
+  ) %>%
+  mutate(., interval = factor(.$interval, levels = levels(.$interval)[8:1])) %>%
+  mutate(dose = forcats::fct_recode(factor(dose), "1ug" = "1", "10ug" = "10")) %>%
+  ggplot(aes(
+    x = day,
+    y = value,
+    color = factor(animal_id)
+  )) +
+  geom_line() +
+  geom_jitter(position = position_jitterdodge(jitter.width = .2)) +
+  geom_hline(aes(yintercept = log10(LLOQ), lty = "LLOQ")) +
+  scale_linetype_manual(values = 2) +
+  facet_grid(dose ~ interval) +
+  theme_bw() +  theme(panel.grid.major = element_line(colour = "grey100")) +
+  labs(
+    x = " ",
+    y = expression(log[10] ~ S2P ~ IgG ~ titer),
+    color = "",
+    linetype = ""
+  ) +
+  scale_color_manual(
+    values = c(
+      "#c25dba",
+      "#72b24a",
+      "#7561cf",
+      "#ce9b44",
+      "#807dc3",
+      "#7a7d37",
+      "#4faad9",
+      "#c95c3f",
+      "#4bac88",
+      "#c8577b"
+    )
+  ) +
+  scale_y_continuous(breaks = 1:7) +
+  scale_x_continuous(breaks = c(56  , 87, 115, 143, 171, 199, 227)) +
+  theme(
+    axis.text = element_text(size = 12),
+    axis.title = element_text(size = 16),
+    axis.text.x = element_text(
+      angle = 45,
+      hjust = 1,
+      vjust = 1
+    ),
+    strip.text = element_text(size = 14),
+    legend.text = element_text(size = 14),
+    legend.title = element_text(size = 16)
+  )
+
+cowplot::plot_grid(plotlist = list( raw1, raw2 ), labels = c("A", "B"), nrow = 2, ncol = 1)
+
+#ggsave(filename = "figures_tables/ELISA/plot_raw.png", width = 16, height=16)
+
+```
+
+## Model fitting
+
+### Residual diagnostics when model day as a continuous variable
+```{r, fig.width = 12, fig.height = 6}
+#-------------------------------------------------------------------------------
+# Fit the model
+#-------------------------------------------------------------------------------
+dtemp <- filter(d, interval != "PBS" & interval != "0") %>%
+  mutate(
+    dose = factor(dose),
+    day = as.numeric(day),
+    animal_id = factor(animal_id),
+    interval = factor(interval)
+  ) %>%
+  mutate(
+    animal_unique_id = paste0(interval, "_", animal_id),
+    animal_unique_id = factor(animal_unique_id)
+  )
+
+# fit a gam model
+gam_fit <-
+  mgcv::gam(
+    value ~ interval + dose + s(day, k = 9) + interval:day +
+      interval:dose +  dose:day + dose:day:interval +
+      s(interval, bs = "re") + s(interval, day, bs = "re") ,
+    data = dtemp,
+    method = 'REML'
+  )
+
+
+# Residual diagnostics figure
+p <- assumption_check(gam_fit)
+title <-
+  ggdraw() + draw_label(
+    "ELISA residual diagnostics when model day as a continuous variable",
+    x = 0.03,
+    hjust = 0
+  )
+plot_grid(
+  title,
+  p,
+  ncol = 1,
+  rel_heights = c(0.1, 1),
+  align = "v"
+)
+
+
+# fit a gam linear model
+gam_fit_linear <-
+  mgcv::gam(
+    value ~ interval + dose + day + interval:day +
+      interval:dose +  dose:day + dose:day:interval +
+      s(interval, bs = "re") + s(interval, day, bs = "re") ,
+    data = dtemp,
+    method = 'REML'
+  )
+
+# fit a gam model at df = 8
+gam_fit_df8 <-
+  mgcv::gam(
+    value ~ interval + dose + s(day, k = 8) + interval:day +
+      interval:dose +  dose:day + dose:day:interval +
+      s(interval, bs = "re") + s(interval, day, bs = "re") ,
+    data = dtemp,
+    method = 'REML'
+  )
+```
+### Diagnostics
+The model without smoothing spline on `day` does not fit as good as the selected model, where the selected model has  AIC = `r round(AIC(gam_fit))` and  BIC = `r round(BIC(gam_fit))` and the model without smoothing spline has AIC = `r round(AIC(gam_fit_linear))` and BIC = `r round(BIC(gam_fit_linear))`.
+
+The selected model has degrees of freedom equals 9 for the smoothing spline, which is the maximum degrees of freedom allowed given the unique covariate combinations. AIC and BIC tests suggested degree of freedom equals 9 has the best fit. The model has df = 8 smoothing spline has AIC = `r round(AIC(gam_fit_df8))` and BIC = `r round(BIC(gam_fit_df8))`. 
+
+Therefore, we add smoothing spline with df = 9 to variable `day`.
+
+```{r, fig.width = 12, fig.height = 6}
+# Residual diagnostics figure
+p <- assumption_check(gam_fit_linear)
+title <-
+  ggdraw() + draw_label(
+    "ELISA residual diagnostics when model day as a continuous variable",
+    x = 0.03,
+    hjust = 0
+  )
+plot_grid(
+  title,
+  p,
+  ncol = 1,
+  rel_heights = c(0.1, 1),
+  align = "v"
+)
+
+
+```
+
+
+### Figure 2. S2-P-specific Serum Binding IgG Antibody Titers
+```{r, fig.width=12, fig.height=8}
+#-------------------------------------------------------------------------------
+# Figure 2. Spike-specific Serum Binding IgG Antibody Titers
+#-------------------------------------------------------------------------------
+plot1 <- ggemmeans(gam_fit, terms = c("day", "interval", "dose"))
+plot(plot1) +
+  scale_color_manual(values = panel0) +
+  scale_x_continuous(
+    breaks = c(56 , 64, 73, 87, 115, 143, 171, 199, 226),
+    labels = c(
+      "56(prime)",
+      "64(1wk post-boost)",
+      "73(2wk post-boost)",
+      "87(4wk post-boost)",
+      "115(8wk post-boost)",
+      "143(12wk post-boost)",
+      "171(16wk post-boost)",
+      "199(20wk post-boost)",
+      "227(24wk post-boost)"
+    )
+  ) +
+  labs(
+    title = expression(Figure2A ~ Predicted ~ values ~ "for" ~ log[10] ~ S2P ~
+                         IgG ~ titer),
+    y = expression(log[10] ~ S2P ~ IgG ~ titer)
+  ) +
+  theme(panel.grid.major = element_line(colour = "grey100")) +
+  theme(
+    axis.text = element_text(size = 12),
+    axis.text.x = element_text(
+      angle = 45,
+      hjust = 1,
+      vjust = 1
+    ),
+    axis.title = element_text(size = 18),
+    strip.text = element_text(size = 18),
+    legend.text = element_text(size = 16),
+    legend.title = element_text(size = 18),
+    plot.title = element_text(size = 20),
+    legend.position = "bottom"
+  ) +
+  facet_grid( ~ facet) 
+```
+
+```{r, fig.width=12, fig.height=8}
+# plot effect of dose treating dose as numerical variable
+plot2 <-
+  ggemmeans(
+    gam_fit,
+    terms = c("day", "dose", "interval"),
+    condition = c("day", "interval")
+  )
+plot(plot2) +
+  #scale_color_manual(values=dosepanel) +
+  scale_x_continuous(
+    breaks = c(56 , 64, 73, 87, 115, 143, 171, 199, 226),
+    labels = c(
+      "56(prime)",
+      "64(1wk post-boost)",
+      "73(2wk post-boost)",
+      "87(4wk post-boost)",
+      "115(8wk post-boost)",
+      "143(12wk post-boost)",
+      "171(16wk post-boost)",
+      "199(20wk post-boost)",
+      "226(24wk post-boost)"
+    )
+  ) +
+  labs(
+    title = expression(Figure2B ~ Predicted ~ values ~ "for" ~ log[10] ~ S2P ~
+                         IgG ~ titer),
+    y = expression(log[10] ~ S2P ~ IgG ~ titer)
+  ) +
+  theme(panel.grid.major = element_line(colour = "grey100")) +
+  theme(axis.text.x = element_text(
+    angle = 45,
+    hjust = 1,
+    vjust = 1
+  ),
+  legend.position = "bottom") +
+  facet_wrap( ~ facet)
+```
+
+### Residual diagnostics when model day as a factor
+```{r, fig.width=12, fig.height=6}
+# fit the model for mean comparison
+dtemp <- filter(d, interval != "PBS" & interval != "0") %>%
+  mutate(
+    dose = as.factor(dose),
+    animal_id = factor(animal_id),
+    interval = factor(interval),
+    day = factor(day)
+  ) %>%
+  mutate(animal_id = paste0(interval, "_", animal_id)) %>%
+  mutate(animal_id = paste0(animal_id , "_", dose))
+
+lm_fit <-
+  lmer(value ~ interval * dose * day + (1 | animal_id) , data = dtemp)
+p2 <- assumption_check(lm_fit)
+
+
+# Residual diagnostics figure
+title <-
+  ggdraw() + draw_label(
+    "ELISA residual diagnostics when model day as a discrete variable",
+    x = 0.03,
+    hjust = 0
+  )
+plot_grid(
+  title,
+  p2,
+  ncol = 1,
+  rel_heights = c(0.1, 1),
+  align = "v"
+)
+
+```
+
+### Supplementary Figure 1. Predicted Fold-change of Spike-specific Serum Binding IgG Antibody Titers
+```{r, fig.width=12, fig.height=8}
+# The results indicate that the peak immune response/ titer levels are achieved at 2 weeks post prime
+grid <- ref_grid(lm_fit, cov.keep = c("day", "dose", "interval"))
+emm_fit_day <- emmeans(grid, ~ day |  interval + dose)
+
+#-------------------------------------------------------------------------------
+# Supplementary Figure 2. Predicted Fold-change of Spike-specific Serum Binding IgG Antibody Titers.
+#-------------------------------------------------------------------------------
+
+set.seed(101)
+summary(
+  contrast(
+    emm_fit_day,
+    list(
+      "Day 73 vs Day 56 \n(2wk post-boost) vs (Prime)" = c(-1, 0, 1, 0, 0, 0, 0, 0, 0),
+      "Day 227 vs Day 56 \n(24wk post-boost) vs (Prime)" = c(-1, 0, 0, 0, 0, 0, 0, 0, 1)
+    )
+  ),
+  infer = TRUE,
+  adjust = "mvt",
+  level = .95
+)  %>%
+  as_tibble() %>%
+  mutate(
+    .,
+    interval = forcats::fct_recode(
+      interval,
+      "8 weeks" = "8",
+      "6 weeks" = "6",
+      "4 weeks" = "4",
+      "3 weeks" = "3",
+      "2 weeks" = "2",
+      "1 weeks" = "1"
+    )
+  ) %>%
+  mutate(., interval = factor(.$interval, levels = levels(.$interval)[8:1])) %>%
+  mutate(dose = forcats::fct_recode(factor(dose), "1ug" = "1", "10ug" = "10")) %>%
+  ggplot(aes(x = contrast , y = estimate, colour = interval)) +
+  geom_point(position = position_dodge(width = 0.6), size = 2)  +
+  geom_errorbar(
+    aes(ymin = lower.CL, ymax = upper.CL),
+    width = .1,
+    position = position_dodge(width = 0.6),
+    size = 1
+  ) +
+  scale_color_manual(values = panel0) +
+  theme_bw() +  theme(panel.grid.major = element_line(colour = "grey100")) +
+  scale_y_continuous(breaks = log10(c(0.5, 1, 3, 10, 30, 100)), labels = c(0.5, 1, 3, 10, 30, 100)) +
+  geom_hline(yintercept = 0,
+             color = "darkcyan",
+             lty = "dashed") +
+  labs(x = "",
+       y = expression(Estimated ~ fold ~ change ~ of ~ S2P ~ IgG ~ titer)) +
+  facet_grid( ~ dose) +
+  theme(
+    axis.text = element_text(size = 12),
+    axis.title = element_text(size = 18),
+    strip.text = element_text(size = 18),
+    legend.text = element_text(size = 16),
+    legend.title = element_text(size = 18),
+    plot.title = element_text(size = 20),
+    legend.position = "bottom"
+  )
+
+```
+
+### Supplementary Table 1. Statistical comparisons of S2-P IgG antibody titer in mice between different mRNA-1273 dosing intervals.
+```{r}
+#-------------------------------------------------------------------------------
+# Supplementary Table 1
+#-------------------------------------------------------------------------------
+grid <- ref_grid(gam_fit, cov.keep = c("day", "dose", "interval"))
+em_fit <- emmeans::emmeans(grid, ~ interval | day + dose)
+set.seed(100)
+sum_fit <-
+  summary(
+    pairs(em_fit , reverse = TRUE),
+    infer = TRUE,
+    adjust = "mvt",
+    level = .95
+  )
+
+
+# generate tables
+sum_fit %>%
+  as_tibble() %>%
+  dplyr::select(contrast, estimate, day, dose, p.value) %>%
+  mutate(estimate = 10 ^ estimate) %>%
+  mutate(contrast = str_replace(contrast, " - ", " / ")) %>%
+  rename(
+    "Pairwise comparison" = contrast,
+    "Fold change" = "estimate",
+    "Adjusted P-value" = "p.value"
+  ) %>%
+  filter(`Adjusted P-value`  < 0.05) %>%
+  DT::datatable(caption = "Statistical comparisons of S2-P IgG antibody titer in mice between different mRNA-1273 dosing intervals") %>%
+  formatSignif(columns = c('Fold change', 'Adjusted P-value'),
+               digits = 7)
+```
+
+### Supplementary Figure 4. Statistical comparisons of S2-P IgG Antibody Titers between different mRNA-1273 dosing intervals(Supplementary Table 1 visualization)
+```{r, fig.width = 12, fig.height = 18}
+sum_fit %>%
+  as_tibble() %>%
+  mutate(contrast = str_replace(contrast, " - ", " / ")) %>%
+  mutate(day = as.factor(day)) %>%
+  mutate(
+    day = forcats::fct_recode(
+      factor(day),
+      "Day 56 \n(Prime)" = "56",
+      "Day 64 \n(1wk post-boost)" = "64",
+      "Day 73 \n(2wk post-boost)" = "73",
+      "Day 87 \n(4wk post-boost)" = "87",
+      "Day 115 \n(8wk post-boost)" = "115",
+      "Day 143 \n(12wk post-boost)" = "143",
+      "Day 171 \n(16wk post-boost)" = "171",
+      "Day 199 \n(20wk post-boost)" = "199",
+      "Day 227 \n(24wk post-boost)" = "226"
+    )
+  ) %>%
+  rename(
+    "Pairwise comparison" = contrast,
+    "Fold change" = "estimate",
+    "Adjusted P-value" = "p.value",
+    "Day" = "day"
+  ) %>%
+  mutate(`Pairwise comparison` = str_remove_all(`Pairwise comparison` , "interval")) %>%
+  mutate(dose = forcats::fct_recode(factor(dose), "1ug" = "1", "10ug" = "10")) %>%
+  ggplot(aes(x = `Pairwise comparison` , y = `Fold change`, color = Day)) +
+  geom_point(position = position_dodge(width = 2), size = 3)  +
+  geom_errorbar(
+    aes(ymin = lower.CL, ymax = upper.CL),
+    width = .1,
+    position = position_dodge(width = 2),
+    size = 1
+  ) +
+  scale_color_manual(
+    values = c(
+       "#ABCFE5",
+      "#93C4DE",
+      "#78B5D8",
+      "#60A6D1",
+      "#4A97C9",
+      "#3787C0",
+      "#2575B7",
+      "#1664AB",
+      "#09539D",
+      "#084185"
+    )
+  ) +
+  theme_bw() +  theme(panel.grid.major = element_line(colour = "grey100")) +
+  scale_y_continuous(breaks = log10(c(0.5, 1, 3, 10, 30, 100)), 
+                     labels = c(0.5, 1, 3, 10, 30, 100)) +
+  geom_hline(yintercept = 0,
+             color = "darkcyan",
+             lty = "dashed") +
+  labs(x = "",
+       y = expression(Estimated ~ fold ~ change ~ of ~ S2P ~ IgG ~ titer)) +
+  facet_grid(`Pairwise comparison` ~ dose,
+             scales = "free",
+             space = "free") +
+  coord_flip() +
+  theme(
+    axis.text = element_text(size = 18),
+    axis.title = element_text(size = 18),
+    strip.text = element_text(size = 18),
+    legend.text = element_text(size = 16,
+                               margin = margin(t = 10)),
+    legend.title = element_text(size = 18),
+    plot.title = element_text(size = 20),
+    strip.text.y = element_blank(),
+    legend.position = "right"
+  )
+
+ggsave(filename = "figures_tables/ELISA/ELISA_emmeans.png", width = 16, height=18)
+
+```
+
+## Session information
+
+```{r}
+sessionInfo()
+```
+
