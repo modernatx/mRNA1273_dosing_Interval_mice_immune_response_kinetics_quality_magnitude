@@ -28,6 +28,7 @@ library(DT)
 library(ggpubr)
 library(cowplot)
 source("scripts/utils/utils.R")
+modernacolors()
 ```
 
 ## Load data
@@ -57,12 +58,12 @@ dp %>%
   mutate(
     interval = forcats::fct_recode(
       interval,
-      "8 weeks" = "8",
-      "6 weeks" = "6",
-      "4 weeks" = "4",
-      "3 weeks" = "3",
-      "2 weeks" = "2",
-      "1 week" = "1",
+      "8-week interval" = "8",
+      "6-week interval" = "6",
+      "4-week interval" = "4",
+      "3-week interval" = "3",
+      "2-week interval" = "2",
+      "1-week interval" = "1",
       "Prime only" = "0"
     )
   ) %>%
@@ -152,9 +153,11 @@ assumption_plots <-
     lm_fits ,
     ~ assumption_check(.x) %>%
       plot_grid(
-        ggdraw() + draw_label(paste0("Spleen ", .y, "-specific model residual diagnostics "),
-                              x = 0.03,
-                              hjust = 0),
+        ggdraw() + draw_label(
+          paste0("Spleen ", .y, "-specific model residual diagnostics "),
+          x = 0.03,
+          hjust = 0
+        ),
         .,
         ncol = 1,
         rel_heights = c(0.1, 1),
@@ -182,22 +185,23 @@ ggarrange(plotlist = assumption_plots)
 #-------------------------------------------------------------------------------
 # Figure 4A. Spike-specific Antibody Secreting Cells and Long-Lived Plasma Cells.
 #-------------------------------------------------------------------------------
-# fold change figure 
+# fold change figure
 foldchange1 <-
   emmt_dat %>%
   mutate(
     interval = forcats::fct_recode(
       interval,
-      "8 weeks" = "8",
-      "6 weeks" = "6",
-      "4 weeks" = "4",
-      "3 weeks" = "3",
-      "2 weeks" = "2",
-      "1 week" = "1",
+      "8-week interval" = "8",
+      "6-week interval" = "6",
+      "4-week interval" = "4",
+      "3-week interval" = "3",
+      "2-week interval" = "2",
+      "1-week interval" = "1",
       "Prime only" = "0"
     )
   ) %>%
-  ggplot(aes(x = interval , y = response)) +
+  mutate(facet = "1 week post-boost") %>%
+  ggplot(aes(x = interval , y = response, color = interval)) +
   geom_point(position = position_dodge(width = 0.5), size = 2)  +
   geom_errorbar(
     aes(ymin = lower.CL, ymax = upper.CL),
@@ -205,18 +209,23 @@ foldchange1 <-
     position = position_dodge(width = 0.5),
     size = 1
   ) +
-  scale_color_manual(values = c(
-    "#8d68ca",
-    "#64a758",
-    "#c85994",
-    "#b6933f",
-    "#609bce",
-    "#ca5c49"
-  )) +
+  scale_color_manual(
+    values =   c(
+      modernadarkgray,
+      modernadarkblue2,
+      modernaorange,
+      modernapurple,
+      modernagreen,
+      modernablue,
+      modernared
+      
+    )
+  ) +
   theme_bw() +  theme(panel.grid.major = element_line(colour = "grey100")) +
   scale_y_log10(breaks = c(100, 500, 1000, 1600)) +
-  ggtitle("S2P specific spleen day 64") +
-  labs(x = "", y = "Estimated ASC counts/million cells") +
+  #ggtitle("S2P specific ASCs") +
+  facet_grid( ~ facet) +
+  labs(x = "", y = "Estimated counts/million cells") +
   geom_hline(yintercept = emmt_dat$lower.CL[c(6, 7)],
              color = "darkcyan",
              lty = "dashed") +
@@ -228,9 +237,10 @@ foldchange1 <-
       vjust = 1
     ),
     axis.title = element_text(size = 14),
-    strip.text = element_text(size = 10),
+    strip.text = element_text(size = 14),
     legend.text = element_text(size = 14),
     legend.title = element_text(size = 14),
+    legend.position = "None",
     plot.title = element_text(size = 14, face = "bold"),
     panel.spacing = unit(0, "lines")
   )
@@ -240,20 +250,21 @@ box1 <-
   dp %>%
   filter(interval != "PBS", tissue == "spleen", coating == "S2P") %>%
   mutate(interval = factor(interval, levels = c("PBS", 0:8))) %>%
+  mutate(facet = "1 week post-boost") %>%
   mutate(
     interval = forcats::fct_recode(
       interval,
-      "8 weeks" = "8",
-      "6 weeks" = "6",
-      "4 weeks" = "4",
-      "3 weeks" = "3",
-      "2 weeks" = "2",
-      "1 week" = "1",
+      "8-week interval" = "8",
+      "6-week interval" = "6",
+      "4-week interval" = "4",
+      "3-week interval" = "3",
+      "2-week interval" = "2",
+      "1-week interval" = "1",
       "Prime only" = "0"
     )
   ) %>%
   mutate(day = forcats::fct_recode(factor(day), "day 64" = "64")) %>%
-  ggplot(aes(x = interval, y = counts)) +
+  ggplot(aes(x = interval, y = counts, color = interval)) +
   geom_boxplot(outlier.shape = NA) +
   scale_shape_manual(values = c(16, 5)) +
   scale_y_log10(breaks = c(100, 500, 1000, 1500)) +
@@ -262,28 +273,31 @@ box1 <-
     fun.min = mean,
     fun = mean,
     fun.max = mean,
-    color = "red",
+    color = "grey",
     width = .5,
     geom = "errorbar",
     size = 1
   ) +
+  facet_grid( ~ facet) +
   theme_bw() +  theme(panel.grid.major = element_line(colour = "grey100")) +
   labs(
     x = "",
-    y = "antigen specific \n ASC counts/million cells",
+    y = "Counts/million cells",
     color = "",
     linetype = "",
-    title = "S2P specific spleen day 64 (1wk post-boost) results"
+    title = "S2P specific ASCs"
   ) +
-  scale_color_manual(values = c(
-    "#6496cd",
-    "#cb6939",
-    "#8264cb",
-    "#60a75c",
-    "#c361aa",
-    "#ad963e",
-    "#cc566a"
-  )) +
+  scale_color_manual(
+    values =   c(
+      modernadarkgray,
+      modernadarkblue2,
+      modernaorange,
+      modernapurple,
+      modernagreen,
+      modernablue,
+      modernared
+    )
+  ) +
   theme(
     axis.text = element_text(size = 12),
     title = element_text(size = 14),
@@ -297,11 +311,16 @@ box1 <-
     legend.text = element_text(size = 14),
     legend.title = element_text(size = 14),
     plot.title = element_text(size = 14, face = "bold"),
-    legend.position = "bottom"
+    legend.position = "None",
   )
 
 
-cowplot::plot_grid(plotlist = list( box1, foldchange1 ), nrow = 2, ncol = 1)
+cowplot::plot_grid(
+  plotlist = list(box1, foldchange1),
+  nrow = 2,
+  ncol = 1,
+  labels = c("A", "B")
+)
 ```
 
 
@@ -346,11 +365,25 @@ sum_elispot  %>%
 
 # Supplementary Table 3 visualization
 t3v <-
-sum_elispot %>%
+  sum_elispot %>%
   as_tibble() %>%
-  mutate(contrast = str_replace(contrast, " - ", " / "),
-         contrast = str_remove_all(contrast, "interval")) %>%
-  mutate(day = "Day 64 (1wk post-boost)")%>%
+  separate(contrast, c("a", "b"), sep = " - ") %>%
+  mutate(a = str_remove_all(a , "interval"),
+         b = str_remove_all(b , "interval")) %>%
+  mutate(
+    a = case_when(
+      str_detect(a, "1") ~ paste(a, "week"),
+      str_detect(a, "0") ~ str_replace(a, "0", "Prime only"),
+      TRUE ~ paste(a, "weeks")
+    ),
+    b = case_when(
+      str_detect(b, "1") ~ paste(b, "week"),
+      str_detect(b, "0") ~ str_replace(b, "0", "Prime only"),
+      TRUE ~ paste(b, "weeks")
+    )
+  ) %>%
+  mutate(contrast = paste(a, "/", b)) %>%
+  mutate(day = "1 week post-boost)") %>%
   rename(
     "Pairwise comparison" = contrast,
     "Fold change" = "estimate",
@@ -380,16 +413,13 @@ sum_elispot %>%
   theme_bw() +  theme(panel.grid.major = element_line(colour = "grey100")) +
   scale_y_continuous(breaks = log10(c(0.1, 0.2, 0.5, 1, 2, 3)),
                      labels = c("1/10", "1/5", "1/2", 1, 2, 3)) +
-  facet_grid(~day) +
+  facet_grid( ~ day) +
   geom_hline(yintercept = 0,
              color = "darkcyan",
              lty = "dashed") +
-  labs(
-    title = "Estimated fold change of S2-P–specific ASCs",
-    #subtitle = "1 week following dose 2 between mRNA-1273 (10 μg) dosing interval",
-    x = "",
-    y = ""
-  ) +
+  labs(title = "S2-P-specific ASCs",
+       y = "Estimated Fold-Change",
+       x = "Prime-boost dosing interval") +
   coord_flip() +
   theme(
     axis.text = element_text(size = 12),
@@ -407,15 +437,15 @@ sum_elispot %>%
 ## Model fitting for BM data
 ```{r}
 #-------------------------------------------------------------------------------
-# Fit the model for BM data 
+# Fit the model for BM data
 #-------------------------------------------------------------------------------
-# BM 
+# BM
 d_bm <- subset(d, tissue == "BM")
 
 boxcox_fits <-
   d_bm %>%
   split(.$coating) %>%
-  map( ~ boxcox_fit(.x))
+  map(~ boxcox_fit(.x))
 
 lm_fits <-
   purrr::transpose(boxcox_fits)$lm_fit
@@ -451,7 +481,7 @@ ggarrange(plotlist = assumption_plots)
 
 ### Figure 4B. Spike-specific Antibody Secreting Cells and Long-Lived Plasma Cells
 
-```{r, fig.height=8}
+```{r, fig.height=8, fig.width=12}
 #-------------------------------------------------------------------------------
 # Figure 4B. Spike-specific Antibody Secreting Cells and Long-Lived Plasma Cells.
 #-------------------------------------------------------------------------------
@@ -460,26 +490,22 @@ foldchange2 <-
   mutate(
     interval = forcats::fct_recode(
       interval,
-      "8 weeks" = "8",
-      "6 weeks" = "6",
-      "4 weeks" = "4",
-      "3 weeks" = "3",
-      "2 weeks" = "2",
-      "1 week" = "1",
+      "8-week interval" = "8",
+      "6-week interval" = "6",
+      "4-week interval" = "4",
+      "3-week interval" = "3",
+      "2-week interval" = "2",
+      "1-week interval" = "1",
       "Prime only" = "0"
     )
   ) %>%
-  mutate(
-    day = forcats::fct_recode(
-      factor(day),
-      "Day 87 (4wk post-boost)" = "87",
-      "Day 227 (24wk post-boost)" = "226"
-    )
-  ) %>%
-  mutate(day = factor(day, c(
-    "Day 87 (4wk post-boost)" , "Day 227 (24wk post-boost)"
-  ))) %>%
-  ggplot(aes(x = interval , y = response)) +
+  mutate(day = forcats::fct_recode(
+    factor(day),
+    "4 week post-boost" = "87",
+    "24 week post-boost" = "226"
+  )) %>%
+  mutate(day = factor(day, c("4 week post-boost" , "24 week post-boost"))) %>%
+  ggplot(aes(x = interval , y = response, color = interval)) +
   geom_point(position = position_dodge(width = 0.5), size = 2)  +
   geom_errorbar(
     aes(ymin = lower.CL, ymax = upper.CL),
@@ -489,15 +515,26 @@ foldchange2 <-
   ) +
   theme_bw() +  theme(panel.grid.major = element_line(colour = "grey100")) +
   scale_y_log10(breaks = c(100, 500, 1000, 1600)) +
-  ggtitle("S2P specific Bone Marrow results") +
-  labs(x = "", y = "Estimated ASC counts/million cells") +
+  labs(x = "", y = "Estimated counts/million cells") +
   geom_hline(yintercept = emmt_dat$lower.CL[c(6)],
              color = "darkcyan",
              lty = "dashed") +
   geom_hline(yintercept = emmt_dat$lower.CL[c(13)],
              color = "darkcyan",
              lty = "dashed") +
-  facet_grid( ~ day) +
+  facet_grid(~ day) +
+  scale_color_manual(
+    values =   c(
+      modernadarkgray,
+      modernadarkblue2,
+      modernaorange,
+      modernapurple,
+      modernagreen,
+      modernablue,
+      modernared
+      
+    )
+  ) +
   theme(
     axis.text = element_text(size = 12),
     axis.text.x = element_text(
@@ -506,9 +543,10 @@ foldchange2 <-
       vjust = 1
     ),
     axis.title = element_text(size = 14),
-    strip.text = element_text(size = 10),
+    strip.text = element_text(size = 14),
     legend.text = element_text(size = 14),
     legend.title = element_blank(),
+    legend.position = "None",
     plot.title = element_text(size = 14, face = "bold"),
     panel.spacing = unit(0, "lines")
   )
@@ -520,27 +558,23 @@ box2 <-
   mutate(
     interval = forcats::fct_recode(
       interval,
-      "8 weeks" = "8",
-      "6 weeks" = "6",
-      "4 weeks" = "4",
-      "3 weeks" = "3",
-      "2 weeks" = "2",
-      "1 week" = "1",
+      "8-week interval" = "8",
+      "6-week interval" = "6",
+      "4-week interval" = "4",
+      "3-week interval" = "3",
+      "2-week interval" = "2",
+      "1-week interval" = "1",
       "Prime only" = "0"
     )
   ) %>%
-  mutate(
-    day = forcats::fct_recode(
-      factor(day),
-      "Day 87 (4wk post-boost)" = "87",
-      "Day 227 (24wk post-boost)" = "226"
-    )
-  ) %>%
-  mutate(day = factor(
-    day,
-    levels = c("Day 87 (4wk post-boost)", "Day 227 (24wk post-boost)")
+  mutate(day = forcats::fct_recode(
+    factor(day),
+    "4 week post-boost" = "87",
+    "24 week post-boost" = "226"
   )) %>%
-  ggplot(aes(x = interval, y = counts)) +
+  mutate(day = factor(day,
+                      levels = c("4 week post-boost", "24 week post-boost"))) %>%
+  ggplot(aes(x = interval, y = counts, color = interval)) +
   geom_boxplot(outlier.shape = NA) +
   scale_shape_manual(values = c(16, 5)) +
   scale_y_log10(breaks = c(100, 500, 1000, 1600)) +
@@ -549,20 +583,32 @@ box2 <-
     fun.min = mean,
     fun = mean,
     fun.max = mean,
-    color = "red",
+    color = "grey",
     width = .5,
     geom = "errorbar",
     size = 1
   ) +
+  scale_color_manual(
+    values =   c(
+      modernadarkgray,
+      modernadarkblue2,
+      modernaorange,
+      modernapurple,
+      modernagreen,
+      modernablue,
+      modernared
+      
+    )
+  ) +
   theme_bw() +  theme(panel.grid.major = element_line(colour = "grey100")) +
   labs(
     x = "",
-    y = "antigen specific \n ASC counts/million cells",
+    y = "Counts/million cells",
     color = "",
     linetype = "",
-    title = "S2P specific Bone Marrow results"
+    title = "S2-P-specific LLPCs"
   ) +
-  facet_grid( ~ day) +
+  facet_grid(~ day) +
   theme(
     axis.text = element_text(size = 12),
     title = element_text(size = 14),
@@ -575,9 +621,22 @@ box2 <-
     strip.text = element_text(size = 14),
     legend.text = element_text(size = 14),
     legend.title = element_text(size = 14),
-    plot.title = element_text(size = 14, face = "bold"),
-    legend.position = "bottom"
+    legend.position = "None",
+    plot.title = element_text(size = 14, face = "bold")
   )
+
+cowplot::plot_grid(
+  box1,
+  box2,
+  foldchange1,
+  foldchange2,
+  labels = c("A", "C", "B", "D"),
+  align = 'hv',
+  rel_widths = c(1, 2),
+  rel_heights = c(1, 1)
+)
+#ggsave(filename = "figures_tables/ELISpot/ELISpot_boxplot_F4.png", width = 14, height=10)
+#ggsave(filename = "figures_tables/ELISpot/ELISpot_boxplot_F4.pdf", width = 14, height=10)
 ```
 
 ### Supplementary Table 4. Statistical comparisons of S2-P–specific LLPCs 4 weeks following dose 2 (Day 87) and 24 weeks following dose 2 (Day 227) between mRNA-1273 (10 μg) dosing intervals.
@@ -633,21 +692,33 @@ emm_elispot_BM %>%
 t4v <-
   emm_elispot_BM %>%
   as_tibble() %>%
-  mutate(contrast = str_replace(contrast, " - ", " / "),
-         contrast = str_remove_all(contrast, "interval")) %>%
-  mutate(day = factor(day, levels = c(87, 226))) %>%
+  separate(contrast, c("a", "b"), sep = " - ") %>%
+  mutate(a = str_remove_all(a , "interval"),
+         b = str_remove_all(b , "interval")) %>%
   mutate(
-    day = forcats::fct_recode(
-      day,
-      "Day 87 (4wk post-boost)" = "87",
-      "Day 227 (24wk post-boost)" = "226",
+    a = case_when(
+      str_detect(a, "1") ~ paste(a, "week"),
+      str_detect(a, "0") ~ str_replace(a, "0", "Prime only"),
+      TRUE ~ paste(a, "weeks")
+    ),
+    b = case_when(
+      str_detect(b, "1") ~ paste(b, "week"),
+      str_detect(b, "0") ~ str_replace(b, "0", "Prime only"),
+      TRUE ~ paste(b, "weeks")
     )
   ) %>%
+  mutate(contrast = paste(a, "/", b)) %>%
+  mutate(day = factor(day, levels = c(87, 226))) %>%
+  mutate(day = forcats::fct_recode(
+    day,
+    "4 week post-boost" = "87",
+    "24 week post-boost" = "226",
+  )) %>%
   rename(
     "Pairwise comparison" = contrast,
     "Fold change" = "estimate",
     "Adjusted P-value" = "p.value",
-  ) %>% 
+  ) %>%
   mutate(`Pairwise comparison` = str_remove_all(`Pairwise comparison` , "interval")) %>%
   ggplot(aes(x = `Pairwise comparison` , y = `Fold change`)) +
   geom_point(size = 3)  +
@@ -675,12 +746,12 @@ t4v <-
   geom_hline(yintercept = 0,
              color = "darkcyan",
              lty = "dashed") +
-  facet_grid( ~ day) +
-  labs(title = "Estimated fold change of S2-P–specific LLPC",
+  facet_grid(~ day) +
+  labs(title = "S2-P-specific LLPC",
        # subtitle = "4 weeks following dose 2 (Day 87) and 24 weeks following dose 2 (Day 227)
        # between mRNA-1273 (10 μg) dosing intervals",
-       x = "",
-       y = "") +
+       y = "Estimated Fold-Change",
+       x = "Prime-boost dosing interval") +
   coord_flip() +
   theme(
     axis.text = element_text(size = 12),
@@ -699,7 +770,12 @@ cowplot::plot_grid(
   ncol = 2,
   rel_widths = c(0.5, 1)
 )
-#ggsave(filename = "figures_tables/ELISpot/emmeans_BM_spleen.png", width = 16, height=8)
+ggsave(filename = "figures_tables/ELISpot/emmeans_BM_spleen.png",
+       width = 16,
+       height = 8)
+ggsave(filename = "figures_tables/ELISpot/emmeans_BM_spleen.pdf",
+       width = 16,
+       height = 8)
 ```
 
 ## Session information

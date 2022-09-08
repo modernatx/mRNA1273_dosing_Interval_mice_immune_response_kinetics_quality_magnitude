@@ -12,7 +12,6 @@ date: "2022-08-06"
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
-knitr::opts_knit$set(root.dir = "../..")
 ```
 
 ## Load in libraries
@@ -37,6 +36,7 @@ library(tidybayes)
 library(emmeans)
 library(writexl)
 library(DT)
+library(stringi)
 source("scripts/utils/utils.R")
 modernacolors()
 ```
@@ -72,15 +72,24 @@ p_raw <- filter(d, dose > 0) %>%
   mutate(
     day = fct_recode(
       day,
-      "56(prime)" = "56",
-      "64(1wk post-boost)" = "64",
-      "73(2wk post-boost)" = "73",
-      "87(4wk post-boost)" = "87",
-      "115(8wk post-boost)" = "115",
-      "143(12wk post-boost)" = "143",
-      "171(16wk post-boost)" = "171",
-      "199(20wk post-boost)" = "199",
-      "227(24wk post-boost)" = "227"
+      "Prime only" = "56",
+      "1 wk post-boost" = "64",
+      "2 wk post-boost" = "73",
+      "4 wk post-boost" = "87",
+      "8 wk post-boost" = "115",
+      "12 wk post-boost" = "143",
+      "16 wk post-boost" = "171",
+      "20 wk post-boost" = "199",
+      "24 wk post-boost" = "227"
+    ),
+    dosing_interval_weeks = fct_recode(
+      dosing_interval_weeks,
+      "1-week interval" = "1 week",
+      "2-week interval" = "2 weeks",
+      "3-week interval" = "3 weeks",
+      "4-week interval" = "4 weeks",
+      "6-week interval" = "6 weeks",
+      "8-week interval" = "8 weeks"
     )
   ) %>% 
   ggplot(aes(
@@ -101,7 +110,7 @@ p_raw <- filter(d, dose > 0) %>%
     color = "grey60",
     geom = "pointrange",
     position = position_dodge(width = 1),
-    size = 2,
+    size = 0.85,
     inherit.aes = TRUE,
     pch = "-",
     fun = ~ 10 ^ (mean(log10(.x))) # geometric mean
@@ -116,7 +125,7 @@ p_raw <- filter(d, dose > 0) %>%
       modernablue,
       modernared,
       modernalightgray,
-      modernalightpurple
+      modernalightred
     )
   ) +
   scale_y_continuous(breaks = 10^(2:6),
@@ -127,9 +136,9 @@ p_raw <- filter(d, dose > 0) %>%
                        expression("10" ^ "5"),
                        expression("10" ^ "6")
                      ), trans = "log10") +
-  labs(x = "Day") + 
+  labs(x = "") + 
   facet_grid(dose ~ dosing_interval_weeks,
-             labeller = labeller(.rows = ~ paste0(.x, " ug"))) +
+             labeller = labeller(.rows = ~ paste0("mRNA-1273 ", .x, " ug"))) +
   theme_bw() +
   theme(
     axis.text.x = element_text(angle = 45, hjust=1, vjust = 1)
@@ -137,7 +146,7 @@ p_raw <- filter(d, dose > 0) %>%
 print(p_raw)
 ```
 
-```{r echo = FALSE}
+```{r, echo = FALSE}
 ggsave(p_raw, filename = "figures_tables/ADCC/ADCC_dotplot.pdf", width = 13.9, height=5.96)
 ```
 
@@ -319,21 +328,21 @@ trend_plot <- bind_cols(d_mod, pred.bayes) %>%
   )+
   scale_color_manual(
     values = c(
-      modernablue,
+      modernadarkblue,
       modernaorange,
       modernapurple,
       modernagreen,
-      modernalightgray,
+      modernablue,
       modernared
     )
   ) +
   scale_fill_manual(
     values = c(
-      modernablue,
+      modernadarkblue,
       modernaorange,
       modernapurple,
       modernagreen,
-      modernalightgray,
+      modernablue,
       modernared
     )
   ) +
@@ -353,15 +362,15 @@ trend_plot <- bind_cols(d_mod, pred.bayes) %>%
   scale_x_continuous(
     breaks = c(56 , 64, 73, 87, 115, 143, 171, 199, 226),
     labels = c(
-      "56(prime)",
-      "64(1wk post-boost)",
-      "73(2wk post-boost)",
-      "87(4wk post-boost)",
-      "115(8wk post-boost)",
-      "143(12wk post-boost)",
-      "171(16wk post-boost)",
-      "199(20wk post-boost)",
-      "227(24wk post-boost)"
+      "Prime only",
+      "1 wk post-boost",
+      "2 wk post-boost",
+      "4 wk post-boost",
+      "8 wk post-boost",
+      "12 wk post-boost",
+      "16 wk post-boost",
+      "20 wk post-boost",
+      "24 wk post-boost"
     )
   ) +
   facet_wrap(~dose, labeller = labeller(.cols = ~ paste0("mRNA-1273 ", .x, " ug"))) +
@@ -385,7 +394,7 @@ print(trend_plot)
 ```
 
 ```{r echo = FALSE}
-ggsave(filename = "figures_tables/ADCC/ADCC_trend.pdf", plot = trend_plot, width = 11.1, height=6.96)
+ggsave(filename = "figures_tables/ADCC/ADCC_trend.pdf", plot = trend_plot, width = 11.1, height=6.96, device = cairo_pdf)
 ```
 
 ### Group-wise mean comparisons
@@ -456,15 +465,25 @@ emmeans_plot <- contrast(
 ) %>%
   plot() +
   geom_vline(aes(xintercept = 0), lty = 2, color = modernared) +
-  labs(x = "Fold change between contrasted dosing intervals") +
+  labs(x = "Estimated fold change", y = "Contrasted prime-boost dosing intervals") +
   scale_x_continuous(labels = ~ 2 ^ .x) +
+  scale_y_discrete(labels = ~ str_remove_all(.x, "dosing_interval_weeks") %>%
+                     str_replace("-", "/") %>%
+                     stringi::stri_replace_all(regex = "([[:digit:]])", replacement = "$1 weeks") %>%
+                     str_replace(pattern = "1 weeks", "1 week")) +
+  facet_wrap(
+    ~ dose,
+    labeller = labeller(.rows = ~ paste0("mRNA-1273 ", .x, "ug")),
+    strip.position = "right",
+    nrow = 2
+  ) +
   theme_bw()
 
 print(emmeans_plot)
 ```
 
-```{r}
-ggsave(emmeans_plot, filename = "figures_tables/ADCC/ADCC_tests.png", width = 8, height = 4)
+```{r, echo = FALSE}
+ggsave(emmeans_plot, filename = "figures_tables/ADCC/ADCC_tests.pdf", width = 8, height = 4, device = cairo_pdf)
 ```
 
 ## Session Information

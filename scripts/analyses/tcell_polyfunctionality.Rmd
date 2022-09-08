@@ -12,7 +12,6 @@ date: "2022-08-07"
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
-knitr::opts_knit$set(root.dir = "../..")
 ```
 
 ## Load in libraries
@@ -21,13 +20,20 @@ knitr::opts_knit$set(root.dir = "../..")
 #-------------------------------------------------------------------------------
 # ANALYSIS OF T CELL POLYFUNCTIONALITY DATA
 #-------------------------------------------------------------------------------
-library(tidyverse)
+library(dplyr)
+library(purrr)
+library(readr)
+library(tidyr)
+library(magrittr)
+library(ggplot2)
 library(gamlss)
 library(emmeans)
 library(RColorBrewer)
 library(cowplot)
 library(writexl)
 library(DT)
+library(stringi)
+library(stringr)
 map <- purrr::map
 
 # functions to run EM for choosing threshold
@@ -199,8 +205,9 @@ print(pgrid_out)
 ```
 
 ```{r echo = FALSE}
+cowplot::set_null_device(cairo_null_device)
 cowplot::save_plot(
-  filename = "figures_tables/polyfunctional_tcell/threshold/betanormalmixture.png",
+  filename = "figures_tables/polyfunctional_tcell/threshold/betanormalmixture.pdf",
   plot = pgrid_out,
   ncol = 4,
   nrow = 2
@@ -241,24 +248,40 @@ write_tsv(thresh_table, file = "figures_tables/polyfunctional_tcell/threshold/th
 
 ```{r, fig.width=12, fig.height = 4}
 #-------------------------------------------------------------------------------
-# Boxplots of aggregate composition across weeks post dose, by day
+# Boxplots of aggregate composition across Prime-boost interval, by day
 #-------------------------------------------------------------------------------
 p_boxplot2 <- group_split(threshd_mix, cell_population) %>%
   purrr::map(
-    ~ ggplot(.x, aes(x = weeks_post_dose, y = thresh_agg_composition, group = interaction(factor(num_positive), weeks_post_dose))) +
+    ~ mutate(
+      .x,
+      day = forcats::fct_recode(
+        factor(day),
+        "1 wk\npost-boost" = "64",
+        "4 wk\npost-boost" = "87",
+        "12 wk\npost-boost" = "143",
+        "24 wk\npost-boost" = "226"
+        )
+      ) %>% 
+      ggplot(aes(x = weeks_post_dose, y = thresh_agg_composition, group = interaction(factor(num_positive), weeks_post_dose))) +
       geom_boxplot(aes(color = factor(num_positive)), outlier.shape = NA) +
       geom_jitter(aes(color = factor(num_positive)), position = position_jitterdodge(), pch = 21) +
-      scale_color_manual(values = c(modernaorange, modernablue, modernapurple, modernagreen)) +
+      scale_color_manual(values = brewer.pal(n = 9, "BuGn")[c(4,6,9)]) +
       scale_y_continuous(trans = "sqrt") +
-      facet_grid(day ~ Stimulation,
-                 labeller = labeller("day" = function(.x) paste0("Day ", .x))) +
-      labs(x = "Weeks post dose", y = "Aggregate composition", title = paste0(.x$cell_population[1], " cells"), color = "# positive") +
+      facet_grid(day ~ Stimulation) +
+      labs(
+        x = "Prime-boost interval (weeks)",
+        y = "Aggregate composition",
+        title = paste0(.x$cell_population[1], " cells") %>%
+          stringi::stri_replace(regex = "([[:digit:]])", replacement = "$1\\+"),
+        color = "# positive"
+      ) +
       theme_bw()
-  ) 
+  )
 walk(p_boxplot2, print)
 ```
 
 ```{r, echo = FALSE}
+cowplot::set_null_device(cairo_null_device)
 cowplot::plot_grid(plotlist = p_boxplot2, nrow = 2) %>%
   cowplot::save_plot(filename = "figures_tables/polyfunctional_tcell/polyfunctional_tcell_animal_level_dotplot.pdf", nrow = 2)
 ```
@@ -271,6 +294,15 @@ cowplot::plot_grid(plotlist = p_boxplot2, nrow = 2) %>%
 #   across weeks post dose
 #-------------------------------------------------------------------------------
 barp <- threshd_mix %>%
+  mutate(
+    day = forcats::fct_recode(
+      factor(day),
+      "1 wk\npost-boost" = "64",
+      "4 wk\npost-boost" = "87",
+      "12 wk\npost-boost" = "143",
+      "24 wk\npost-boost" = "226"
+    )
+  ) %>% 
   group_split(cell_population, group, weeks_post_dose, day, Stimulation, num_positive) %>%
   map_dfr(~ mutate(.x, agg_composition=mean(agg_composition), mouse_id = NULL) %>% distinct()) %>%
   group_split(cell_population) %>%
@@ -279,8 +311,8 @@ barp <- threshd_mix %>%
       geom_bar(aes(fill = factor(num_positive)), position = "stack", stat = "identity") +
       scale_fill_manual(values = brewer.pal(n = 9, "BuGn")[c(4,6,9)]) +
       facet_grid(day ~ Stimulation,
-                 labeller = labeller("num_positive" = function(.x) paste0(.x, " positive"), "day" = function(.x) paste0("Day ", .x))) +
-      labs(x = "Weeks post dose", y = "Mean aggregate composition", title = paste0(.x$cell_population[1], " cells"), fill = "# positive") +
+                 labeller = labeller("num_positive" = function(.x) paste0(.x, " positive"))) +
+      labs(x = "Prime-boost interval (weeks)", y = "Mean aggregate composition", title = paste0(.x$cell_population[1], " cells"), fill = "# positive") +
       theme_bw()
   )
 walk(barp, print)
@@ -414,9 +446,21 @@ contrast_plots1 <- imap(em_fits1, ~ {
   for(i in seq_along(titles)) {
     out[[i]] <- plot(.x[[i]]) +
       geom_vline(aes(xintercept = 1), linetype = "twodash", color = "red") +
-      facet_grid(~ day, labeller = labeller(day = function(.y) paste0("Day ", .y))) +
-      labs(x = "Odds ratio", y = "Contrast in dosing interval") +
-      ggtitle(paste0("CD", str_extract(.y, "[[:digit:]]"), " T cells, ", titles[i], " function(s)")) +
+      facet_grid( ~ day, labeller = labeller(
+        day = function(.y)
+          as.character(.y) %>%
+          replace(. == "64", "1 wk post-boost") %>%
+          replace(. == "87", "4 wk post-boost") %>%
+          replace(. == "143", "12 wk post-boost") %>%
+          replace(. == "226", "24 wk post-boost")
+      )) +
+      scale_y_discrete(labels = ~ str_remove_all(.x, "weeks_post_dose") %>%
+                     str_replace("-", "/") %>%
+                     stringi::stri_replace_all(regex = "([[:digit:]])", replacement = "$1 weeks") %>%
+                     str_replace(pattern = "1 weeks", "1 week") %>%
+                    str_replace(pattern = "0 weeks", "Prime only")) +
+      labs(x = "Estimated odds ratio", y = "Contrasted prime-post dosing interval") +
+      ggtitle(paste0("CD", str_extract(.y, "[[:digit:]]"), "+ T cells, ", titles[i], " function(s)")) +
       theme_bw()
   }
   out
@@ -426,13 +470,13 @@ walk(contrast_plots1, print)
 ```
 
 ```{r echo = FALSE}
-ggsave(filename = "figures_tables/polyfunctional_tcell/model/interval_CD4_one.png", plot = contrast_plots1$f4[[1]], width = 11.8, height = 3.85)
-ggsave(filename = "figures_tables/polyfunctional_tcell/model/interval_CD4_two.png", plot = contrast_plots1$f4[[2]], width = 11.8, height = 3.85)
-ggsave(filename = "figures_tables/polyfunctional_tcell/model/interval_CD4_three.png", plot = contrast_plots1$f4[[3]], width = 11.8, height = 3.85)
+ggsave(filename = "figures_tables/polyfunctional_tcell/model/interval_CD4_one.pdf", plot = contrast_plots1$f4[[1]], width = 11.8, height = 3.85, device = cairo_pdf)
+ggsave(filename = "figures_tables/polyfunctional_tcell/model/interval_CD4_two.pdf", plot = contrast_plots1$f4[[2]], width = 11.8, height = 3.85, device = cairo_pdf)
+ggsave(filename = "figures_tables/polyfunctional_tcell/model/interval_CD4_three.pdf", plot = contrast_plots1$f4[[3]], width = 11.8, height = 3.85, device = cairo_pdf)
 
-ggsave(filename = "figures_tables/polyfunctional_tcell/model/interval_CD8_one.png", plot = contrast_plots1$f8[[1]], width = 11.8, height = 3.85)
-ggsave(filename = "figures_tables/polyfunctional_tcell/model/interval_CD8_two.png", plot = contrast_plots1$f8[[2]], width = 11.8, height = 3.85)
-ggsave(filename = "figures_tables/polyfunctional_tcell/model/interval_CD8_three.png", plot = contrast_plots1$f8[[3]], width = 11.8, height = 3.85)
+ggsave(filename = "figures_tables/polyfunctional_tcell/model/interval_CD8_one.pdf", plot = contrast_plots1$f8[[1]], width = 11.8, height = 3.85, device = cairo_pdf)
+ggsave(filename = "figures_tables/polyfunctional_tcell/model/interval_CD8_two.pdf", plot = contrast_plots1$f8[[2]], width = 11.8, height = 3.85, device = cairo_pdf)
+ggsave(filename = "figures_tables/polyfunctional_tcell/model/interval_CD8_three.pdf", plot = contrast_plots1$f8[[3]], width = 11.8, height = 3.85, device = cairo_pdf)
 ```
 
 ### Supplementary Table 5: T cell polyfunctionality group comparison *P*-values
@@ -454,7 +498,13 @@ em_tables <- imap(fits, ~ {
 pvals <- imap_dfr(em_tables, ~ {
   imap_dfr(.x, function(.xx, .yy) {
     as_tibble(.xx) %>%
-      mutate(num_cytokines = .yy)
+      mutate(num_cytokines = .yy) %>%
+      mutate(contrast = str_remove_all(contrast, "weeks_post_dose") %>%
+                     str_replace("-", "/") %>%
+                     stringi::stri_replace_all(regex = "([[:digit:]])", replacement = "$1 weeks") %>%
+                     str_replace(pattern = "1 weeks", "1 week") %>%
+                    str_replace(pattern = "0 weeks", "Prime only")
+      )
   }) %>%
     mutate(tcell = .y)
 }) %>%

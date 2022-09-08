@@ -12,7 +12,6 @@ date: "2022-08-06"
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
-knitr::opts_knit$set(root.dir = "../..")
 ```
 
 ## Load in libraries
@@ -41,7 +40,6 @@ d <- readxl::read_xlsx("processed_data/antiPEG.xlsx") %>%
   mutate(
     interval = factor(interval, levels = c("PBS", 8,6,4,3,2,1,"Prime Only")),
     dose = factor(dose, levels = c("0ug", "1ug", "10ug")),
-    sheet = paste0(sheet, " Concentration"),
     log2_titer = log2(antiPEG_titer),
     case = ifelse(dose == "0ug", "PBS", "Dosed"),
     case = factor(case, levels = c("PBS", "Dosed"))
@@ -114,7 +112,7 @@ print(p_raw)
 ```
 
 ```{r echo = FALSE}
-ggsave("figures_tables/antiPEG/antiPEG_dotplots.png", width = 9.89, height = 7.81)
+ggsave("figures_tables/antiPEG/antiPEG_dotplots.pdf", width = 9.89, height = 7.81)
 ```
 
 ## Model fitting
@@ -193,29 +191,11 @@ p <- imap(
     scale_x_continuous(
       breaks = log2(c(0.75, 1, 2, 4, 8)),
       labels = ~ 2 ^ .x) +
-    scale_y_discrete(
-      breaks = c(
-        "8 - PBS",
-        "6 - PBS",
-        "4 - PBS",
-        "3 - PBS",
-        "2 - PBS",
-        "1 - PBS",
-        "Prime Only - PBS"
-      ),
-      labels = c(
-        "8 / PBS",
-        "6 / PBS",
-        "4 / PBS",
-        "3 / PBS",
-        "2 / PBS",
-        "1 / PBS",
-        "Prime Only / PBS"
-      )
-    ) +
     geom_vline(aes(xintercept = 0), col = "tomato2", linetype = 2) +
-    ggtitle(str_remove_all(.y, "anti-PEG | Concentration")) +
-    labs(x = "Fold change", y = "Contrast") +
+    ggtitle(str_remove_all(.y, "Concentration") %>% str_replace("anti", "Anti")) +
+    labs(x = "Estimated fold change", y = "Contrasted prime-boost dosing intervals") +
+    scale_y_discrete(labels = ~ stringi::stri_replace_all(.x, regex = "([[:digit:]])", replacement = "$1 week") %>%
+                       str_replace("-", "/")) +
     theme_bw()
 )
 p_emgrid <- cowplot::plot_grid(plotlist = p,
@@ -225,7 +205,8 @@ print(p_emgrid)
 ```
 
 ```{r echo = FALSE}
-cowplot::save_plot(plot = p_emgrid, filename = "figures_tables/antiPEG/antiPEG_contrasts.png", nrow = 1, ncol = 2)
+cowplot::set_null_device(cairo_null_device)
+cowplot::save_plot(plot = p_emgrid, filename = "figures_tables/antiPEG/antiPEG_contrasts.pdf", nrow = 1, ncol = 2)
 ```
 
 ### Supplementary Table 8: Anti-PEG *P*-value table for group mean comparisons

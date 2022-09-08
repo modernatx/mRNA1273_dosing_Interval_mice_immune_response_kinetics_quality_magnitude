@@ -16,7 +16,8 @@ modernacolors <- function() {
     modernapurple = c(.54, .14, .55),
     modernadarkred = c(.41, .09, .12),
     modernadarkgray = c(.25, .25, .25),
-    modernadarkblue = c(.07, .15, .25)
+    modernadarkblue = c(.07, .15, .25),
+    modernadarkblue2 = c(.07, .15, .65)
   )
   
   x <- sapply(lapply(cols, function(X) round(X * 255)), function(Y) paste0(Y, collapse = " "))

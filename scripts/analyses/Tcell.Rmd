@@ -30,19 +30,21 @@ library(DT)
 library(ggpubr)
 library(cowplot)
 source("scripts/utils/utils.R")
+modernacolors()
 ```
 
 ## Load data
 ```{r}
 # color panel
 panel0 <-
-  c("#c85979",
-    "#6980ce",
-    "#4aac8d",
-    "#b460bd",
-    "#cd5d39",
-    "#b49541",
-    "#4ab0aa")
+  c(    modernadarkgray,
+    modernadarkblue2,
+    modernaorange,
+    modernapurple,
+    modernagreen,
+    modernablue,
+    modernared
+  )
 dosepanel <- c("#cb6939", "#8264cb")
 d <- read_excel("processed_data/Tcell.xlsx")
 dt <- d %>%
@@ -161,12 +163,12 @@ plots <-
   mutate(
     interval = forcats::fct_recode(
       interval,
-      "8 weeks" = "8",
-      "6 weeks" = "6",
-      "4 weeks" = "4",
-      "3 weeks" = "3",
-      "2 weeks" = "2",
-      "1 week" = "1",
+     "8-week interval" = "8",
+      "6-week interval" = "6",
+      "4-week interval" = "4",
+      "3-week interval" = "3",
+      "2-week interval" = "2",
+      "1-week interval" = "1",
       "Prime only" = "0"
     )
   ) %>%
@@ -300,6 +302,9 @@ plots[[1]]
 
 ```{r, fig.width=14, fig.height=6}
 heatmaps[[1]]
+#cowplot::plot_grid(plotlist = list( plots[[1]], heatmaps[[1]] ), nrow = 2, ncol = 1)
+ggsave(filename = "figures_tables/Tcell/Tcell_CD4_SF4.png", width = 16, height=12, bg = "white")
+#ggsave(filename = "figures_tables/Tcell/Tcell_CD4_SF4.pdf", width = 16, height=12, bg = "white")
 ```
 
 ### Supplementary Table 6. Statistical comparisons of percentage of SARS-CoV-2 spike-specific IFNγ, IL-2, and TNFα producing CD4+ T cells through 24 weeks following dose 2.
@@ -344,14 +349,25 @@ emmt_table %>%
 
 ### Supplementary Figure 12 Statistical comparisons of percentage of SARS-CoV-2 spike-specific IFNγ, IL-2, and TNFα producing CD4+ T cells through 24 weeks following dose 2 (Supplementary Table 6 visualization)
 ```{r, fig.width=21, fig.height=24}
-cd4_emmeans <-
+cd4 <-
   emmt_table %>%
   as_tibble() %>%
-  mutate(cytokine = case_when(
-    cytokine == "IFNg" ~ "IFNγ",
-    cytokine == "TNFa" ~ "TNFα",
-    TRUE ~ cytokine
-  )) %>%
+  separate(contrast, c("a", "b"), sep = " / ") %>%
+  mutate(a = str_remove_all(a , "interval"),
+         b = str_remove_all(b , "interval")) %>%
+  mutate(
+    a = case_when(
+      str_detect(a, "1") ~ paste(a, "week"),
+      str_detect(a, "0") ~ str_replace(a, "0", "Prime only"),
+      TRUE ~ paste(a, "weeks")
+    ),
+    b = case_when(
+      str_detect(b, "1") ~ paste(b, "week"),
+      str_detect(b, "0") ~ str_replace(b, "0", "Prime only"),
+      TRUE ~ paste(b, "weeks")
+    )
+  ) %>%
+  mutate(contrast = paste(a, "/", b)) %>%
   mutate(day = case_when(
     day == "64" ~ "7_1",
     day == "87" ~ "30_4",
@@ -371,6 +387,30 @@ cd4_emmeans <-
     "Fold change" = "ratio",
     "Adjusted P-value" = "p.value"
   ) %>%
+  mutate(group = factor(
+    group,
+    levels = c(
+      "S1 specific IFNg",
+      "S1 specific IL-2",
+      "S1 specific TNFa",
+      "S2 specific IFNg",
+      "S2 specific IL-2",
+      "S2 specific TNFa"
+    ),
+    ordered = TRUE,
+    labels = c(
+      expression(S1 ~ specific ~ IFN ~ gamma),
+      expression(S1 ~ specific ~ IL - 2),
+      expression(S1 ~ specific ~ TNF ~ alpha),
+      expression(S2 ~ specific ~ IFN ~ gamma),
+      expression(S2 ~ specific ~ IL - 2),
+      expression(S2 ~ specific ~ TNF ~ alpha)
+    )
+  ))
+
+
+cd4_emmeans <-
+  cd4 %>%
   split(.$day) %>%
   imap(
     ~ .x %>%
@@ -395,44 +435,64 @@ cd4_emmeans <-
         lty = "dashed"
       ) +
       labs(
-        x = "",
-        y = "",
-        #title = "Estimated fold change of SARS-CoV-2 spike-specific ",
-        title = paste0(
-          str_split(.y, "_")[[1]][1],
-          " days post dose 2 (approximate ",
-          str_split(.y, "_")[[1]][2],
-          " week post-dose 2)"
-        )
+        y = "Estimated Fold Change",
+        x = "Prime-boost dosing interval",
+        title = paste0("Approximate ",
+                       str_split(.y, "_")[[1]][2],
+                       " week post-dose 2")
       ) +
-      facet_grid(~ group,
-                 scales = "free",
-                 space = "free") +
+      facet_grid(
+        ~ group,
+        scales = "free",
+        space = "free",
+        labeller = label_parsed
+      ) +
       coord_flip() +
       theme(
-        strip.text = element_text(size = 14),
+        strip.text = element_text(size = 12),
         legend.text = element_text(size = 14),
         legend.title = element_text(size = 14),
         axis.text = element_text(size = 14),
-        legend.position = "none"
+        legend.position = "top"
       )
     
   )
 
+legend4 <- get_legend(cd4_emmeans$`7_1`)
 
-
-p <-
-  ggarrange(
-    cd4_emmeans$`7_1`,
-    cd4_emmeans$`30_4`,
-    cd4_emmeans$`86_12`,
-    cd4_emmeans$`169_24` ,
+pgrid4 <-
+  cowplot::plot_grid(
+    cd4_emmeans$`7_1` + theme(legend.position = "none"),
+    cd4_emmeans$`30_4` + theme(legend.position = "none"),
+    cd4_emmeans$`86_12` + theme(legend.position = "none"),
+    cd4_emmeans$`169_24` + theme(legend.position = "none"),
     ncol = 1,
-    align = 'h',
     labels = c('A', 'B', 'C', 'D'),
-    common.legend = T
+    align = 'hv',
+    rel_heights = c(1, 1, 1, 1)
   )
-p
+
+p4 <- plot_grid(legend4,
+                pgrid4,
+                ncol = 1,
+                rel_heights  = c(.05, 1))
+p4
+
+ggsave(
+  filename = "figures_tables/Tcell/cd4_emmean.pdf",
+  plot = p4,
+  width = 26,
+  height = 24,
+  device = cairo_pdf
+)
+
+ggsave(
+  filename = "figures_tables/Tcell/cd4_emmeans.png",
+  plot = p4,
+  width = 26,
+  height = 24
+)
+
 
 
 ```
@@ -520,12 +580,12 @@ plots <-
   mutate(
     interval = forcats::fct_recode(
       interval,
-      "8 weeks" = "8",
-      "6 weeks" = "6",
-      "4 weeks" = "4",
-      "3 weeks" = "3",
-      "2 weeks" = "2",
-      "1 week" = "1",
+      "8-week interval" = "8",
+      "6-week interval" = "6",
+      "4-week interval" = "4",
+      "3-week interval" = "3",
+      "2-week interval" = "2",
+      "1-week interval" = "1",
       "Prime only" = "0"
     )
   ) %>%
@@ -642,6 +702,9 @@ plots[[1]]
 ```
 ```{r, fig.width=14, fig.height=6}
 heatmaps[[1]]
+#cowplot::plot_grid(plotlist = list( plots[[1]], heatmaps[[1]] ), nrow = 2, ncol = 1)
+ggsave(filename = "figures_tables/Tcell/Tcell_CD8_SF4B.png", width = 16, height=12, bg = "white")
+#ggsave(filename = "figures_tables/Tcell/Tcell_CD8_SF4B.pdf", width = 16, height=12, bg = "white")
 
 ```
 
@@ -684,14 +747,25 @@ emmt_table8 %>%
 
 ### Supplementary Figure 13 Statistical comparisons of percentage of SARS-CoV-2 spike-specific IFNγ, IL-2, and TNFα producing CD8+ T cells through 24 weeks following dose 2 (Supplementary Table 7 visualization)
 ```{r, fig.width=26, fig.height=24}
-cd8_emmeans <-
+cd8 <-
   emmt_table8 %>%
   as_tibble() %>%
-  mutate(cytokine = case_when(
-    cytokine == "IFNg" ~ "IFNγ",
-    cytokine == "TNFa" ~ "TNFα",
-    TRUE ~ cytokine
-  )) %>%
+  separate(contrast, c("a", "b"), sep = " / ") %>%
+  mutate(a = str_remove_all(a , "interval"),
+         b = str_remove_all(b , "interval")) %>%
+  mutate(
+    a = case_when(
+      str_detect(a, "1") ~ paste(a, "week"),
+      str_detect(a, "0") ~ str_replace(a, "0", "Prime only"),
+      TRUE ~ paste(a, "weeks")
+    ),
+    b = case_when(
+      str_detect(b, "1") ~ paste(b, "week"),
+      str_detect(b, "0") ~ str_replace(b, "0", "Prime only"),
+      TRUE ~ paste(b, "weeks")
+    )
+  ) %>%
+  mutate(contrast = paste(a, "/", b)) %>%
   mutate(day = case_when(
     day == "64" ~ "7_1",
     day == "87" ~ "30_4",
@@ -711,6 +785,29 @@ cd8_emmeans <-
     "Fold change" = "ratio",
     "Adjusted P-value" = "p.value"
   ) %>%
+  mutate(group = factor(
+    group,
+    levels = c(
+      "S1 specific IFNg",
+      "S1 specific IL-2",
+      "S1 specific TNFa",
+      "S2 specific IFNg",
+      "S2 specific IL-2",
+      "S2 specific TNFa"
+    ),
+    ordered = TRUE,
+    labels = c(
+      expression(S1 ~ specific ~ IFN ~ gamma),
+      expression(S1 ~ specific ~ IL - 2),
+      expression(S1 ~ specific ~ TNF ~ alpha),
+      expression(S2 ~ specific ~ IFN ~ gamma),
+      expression(S2 ~ specific ~ IL - 2),
+      expression(S2 ~ specific ~ TNF ~ alpha)
+    )
+  ))
+
+cd8_emmeans <-
+  cd8 %>%
   split(.$day) %>%
   imap(
     ~ .x %>%
@@ -735,44 +832,57 @@ cd8_emmeans <-
         lty = "dashed"
       ) +
       labs(
-        x = "",
-        y = "",
-        #title = "Estimated fold change of SARS-CoV-2 spike-specific ",
-        title = paste0(
-          str_split(.y, "_")[[1]][1],
-          " days post dose 2 (approximate ",
-          str_split(.y, "_")[[1]][2],
-          " week post-dose 2)"
-        )
+        x = "Estimated Fold Change",
+        y = "Prime-boost dosing interval",
+        title = paste0("Approximate ",
+                       str_split(.y, "_")[[1]][2],
+                       " week post-dose 2")
       ) +
-      facet_grid(~ group,
-                 scales = "free",
-                 space = "free") +
+      facet_grid(
+        ~ group,
+        scales = "free",
+        space = "free",
+        labeller = label_parsed
+      ) +
       coord_flip() +
       theme(
-        strip.text = element_text(size = 14),
+        strip.text = element_text(size = 10),
         legend.text = element_text(size = 14),
         legend.title = element_text(size = 14),
         axis.text = element_text(size = 14),
-        legend.position = "none"
+        legend.position = "top"
       )
     
   )
 
+legend <- get_legend(cd8_emmeans$`7_1`)
 
-
-p8 <-
-  ggarrange(
-    cd8_emmeans$`7_1`,
-    cd8_emmeans$`30_4`,
-    cd8_emmeans$`86_12`,
-    cd8_emmeans$`169_24` ,
+pgrid <-
+  cowplot::plot_grid(
+    cd8_emmeans$`7_1` + theme(legend.position = "none"),
+    cd8_emmeans$`30_4` + theme(legend.position = "none"),
+    cd8_emmeans$`86_12` + theme(legend.position = "none"),
+    cd8_emmeans$`169_24` + theme(legend.position = "none"),
     ncol = 1,
-    align = 'h',
     labels = c('A', 'B', 'C', 'D'),
-    common.legend = T
+    align = 'hv',
+    rel_heights = c(1, 1, 1, 1)
   )
-p8
+
+p <- plot_grid(legend, pgrid, ncol = 1, rel_heights  = c(.05, 1))
+p
+
+ggsave(
+  filename = "figures_tables/Tcell/cd8_emmeans.pdf",
+  plot = p,
+  width = 26,
+  height = 24,
+  device = cairo_pdf
+)
+
+ggsave(filename = "figures_tables/Tcell/cd8_emmeans.png",
+       width = 26,
+       height = 24)
 
 
 ```

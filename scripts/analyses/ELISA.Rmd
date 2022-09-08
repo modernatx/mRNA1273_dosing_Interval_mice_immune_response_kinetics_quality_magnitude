@@ -30,6 +30,7 @@ library(pzfx)
 library(DT)
 library(cowplot)
 source("scripts/utils/utils.R")
+modernacolors()
 ```
 
 ## Load data
@@ -48,51 +49,57 @@ d <- read_excel("processed_data/ELISA.xlsx")
 
 # color panel
 panel0 <-
-  c("#c85979",
-    "#6980ce",
-    "#4aac8d",
-    "#b460bd",
-    "#cd5d39",
-    "#b49541",
-    "#4ab0aa")
+  c(
+    modernadarkblue2,
+    modernaorange,
+    modernapurple,
+    modernagreen,
+    modernablue,
+    modernared,
+    modernadarkgray
+  )
 dosepanel <- c("#cb6939", "#8264cb")
 LLOQ <- 25  # lower limit of quantificatin
 
 
 # trend over time
 raw1 <-
-d %>%
+  d %>%
   filter(interval != "PBS") %>%
   mutate(interval = factor(interval)) %>%
   mutate(
     .,
     interval = forcats::fct_recode(
       interval,
-      "8 weeks" = "8",
-      "6 weeks" = "6",
-      "4 weeks" = "4",
-      "3 weeks" = "3",
-      "2 weeks" = "2",
-      "1 week" = "1",
-      "prime only" = "0"
+      "8-week interval" = "8",
+      "6-week interval" = "6",
+      "4-week interval" = "4",
+      "3-week interval" = "3",
+      "2-week interval" = "2",
+      "1-week interval" = "1",
+      "Prime only" = "0"
     )
   ) %>%
   mutate(., interval = factor(.$interval, levels = levels(.$interval)[8:1])) %>%
   mutate(
     day = forcats::fct_recode(
       factor(day),
-      "Day 56 \n (Prime)" = "56",
-      "Day 64 \n (1wk post-boost)" = "64",
-      "Day 73 \n (2wk post-boost)" = "73",
-      "Day 87 \n (4wk post-boost)" = "87",
-      "Day 115 \n (8wk post-boost)" = "115",
-      "Day 143 \n (12wk post-boost)" = "143",
-      "Day 171 \n (16wk post-boost)" = "171",
-      "Day 199 \n (20wk post-boost)" = "199",
-      "Day 227 \n (24wk post-boost)" = "226"
+      "Prime only" = "56",
+      "1 wk post-boost" = "64",
+      "2 wk post-boost" = "73",
+      "4 wk post-boost" = "87",
+      "8 wk post-boost" = "115",
+      "12 wk post-boost" = "143",
+      "16 wk post-boost" = "171",
+      "20 wk post-boost" = "199",
+      "24 wk post-boost" = "226"
     )
   ) %>%
-  mutate(dose = forcats::fct_recode(factor(dose), "1ug" = "1", "10ug" = "10")) %>%
+  mutate(dose = forcats::fct_recode(
+    factor(dose),
+    "mRNA-1273 1 µg" = "1",
+    "mRNA-1273 10 µg" = "10"
+  )) %>%
   ggplot(aes(
     x = factor(day),
     y = value,
@@ -102,7 +109,7 @@ d %>%
   geom_jitter(position = position_jitterdodge(jitter.width = .2)) +
   geom_hline(aes(yintercept = log10(LLOQ), lty = "LLOQ")) +
   scale_linetype_manual(values = 2) +
-  facet_wrap(~ dose, nrow = 3) +
+  facet_wrap( ~ dose, nrow = 3) +
   theme_bw() +  theme(panel.grid.major = element_line(colour = "grey100")) +
   labs(
     x = " ",
@@ -110,16 +117,21 @@ d %>%
     color = "",
     linetype = ""
   ) +
-  scale_color_manual(values = panel0) +
+  scale_color_manual(
+    values =   c(
+      modernared,
+      modernablue,
+      modernagreen,
+      modernapurple,
+      modernaorange,
+      modernadarkblue2,
+      modernadarkgray
+    )
+  ) +
   scale_y_continuous(breaks = 1:7) +
   theme(
     axis.text = element_text(size = 12),
     axis.title = element_text(size = 16),
-    axis.text.x = element_text(
-      angle = 45,
-      hjust = 1,
-      vjust = 1
-    ),
     strip.text = element_text(size = 14),
     legend.text = element_text(size = 14),
     legend.title = element_text(size = 16)
@@ -127,7 +139,7 @@ d %>%
 
 # animal-level line plot
 raw2 <-
-d %>%
+  d %>%
   filter(interval != "PBS") %>%
   mutate(
     interval = factor(interval),
@@ -152,17 +164,21 @@ d %>%
     .,
     interval = forcats::fct_recode(
       interval,
-      "8 weeks" = "8",
-      "6 weeks" = "6",
-      "4 weeks" = "4",
-      "3 weeks" = "3",
-      "2 weeks" = "2",
-      "1 weeks" = "1",
-      "prime only" = "0"
+      "8-week interval" = "8",
+      "6-week interval" = "6",
+      "4-week interval" = "4",
+      "3-week interval" = "3",
+      "2-week interval" = "2",
+      "1-week interval" = "1",
+      "Prime only" = "0"
     )
   ) %>%
   mutate(., interval = factor(.$interval, levels = levels(.$interval)[8:1])) %>%
-  mutate(dose = forcats::fct_recode(factor(dose), "1ug" = "1", "10ug" = "10")) %>%
+  mutate(dose = forcats::fct_recode(
+    factor(dose),
+    "mRNA-1273 1 µg" = "1",
+    "mRNA-1273 10 µg" = "10"
+  )) %>%
   ggplot(aes(
     x = day,
     y = value,
@@ -195,7 +211,18 @@ d %>%
     )
   ) +
   scale_y_continuous(breaks = 1:7) +
-  scale_x_continuous(breaks = c(56  , 87, 115, 143, 171, 199, 227)) +
+  scale_x_continuous(
+    breaks = c(56  , 87, 115, 143, 171, 199, 227),
+    labels = c(
+      "Prime only",
+      "4 wk post-boost",
+      "8 wk post-boost",
+      "12 wk post-boost",
+      "16 wk post-boost",
+      "20 wk post-boost",
+      "24 wk post-boost"
+    )
+  ) +
   theme(
     axis.text = element_text(size = 12),
     axis.title = element_text(size = 16),
@@ -209,10 +236,15 @@ d %>%
     legend.title = element_text(size = 16)
   )
 
-cowplot::plot_grid(plotlist = list( raw1, raw2 ), labels = c("A", "B"), nrow = 2, ncol = 1)
+cowplot::plot_grid(
+  plotlist = list(raw1, raw2),
+  labels = c("A", "B"),
+  nrow = 2,
+  ncol = 1
+)
 
-#ggsave(filename = "figures_tables/ELISA/plot_raw.png", width = 16, height=16)
-
+#ggsave(filename = "figures_tables/ELISA/plot_raw.png", width = 18, height=16)
+#ggsave(filename = "figures_tables/ELISA/plot_raw.pdf", width = 18, height=16)
 ```
 
 ## Model fitting
@@ -318,18 +350,19 @@ plot_grid(
 plot1 <- ggemmeans(gam_fit, terms = c("day", "interval", "dose"))
 plot(plot1) +
   scale_color_manual(values = panel0) +
+  scale_fill_manual(values = panel0) +
   scale_x_continuous(
     breaks = c(56 , 64, 73, 87, 115, 143, 171, 199, 226),
     labels = c(
-      "56(prime)",
-      "64(1wk post-boost)",
-      "73(2wk post-boost)",
-      "87(4wk post-boost)",
-      "115(8wk post-boost)",
-      "143(12wk post-boost)",
-      "171(16wk post-boost)",
-      "199(20wk post-boost)",
-      "227(24wk post-boost)"
+      "Prime only",
+      "1 wk post-boost",
+      "2 wk post-boost",
+      "4 wk post-boost",
+      "8 wk post-boost",
+      "12 wk post-boost",
+      "16 wk post-boost",
+      "20 wk post-boost",
+      "24 wk post-boost"
     )
   ) +
   labs(
@@ -352,7 +385,20 @@ plot(plot1) +
     plot.title = element_text(size = 20),
     legend.position = "bottom"
   ) +
-  facet_grid( ~ facet) 
+  facet_grid(~ facet)
+ggsave(
+  filename = "figures_tables/ELISA/ELISA_Titers_F2A.png",
+  width = 10,
+  height = 8,
+  bg = "white"
+)
+ggsave(
+  filename = "figures_tables/ELISA/ELISA_Titers_F2A.pdf",
+  width = 12,
+  height = 8,
+  bg = "white"
+)
+
 ```
 
 ```{r, fig.width=12, fig.height=8}
@@ -368,18 +414,19 @@ plot(plot2) +
   scale_x_continuous(
     breaks = c(56 , 64, 73, 87, 115, 143, 171, 199, 226),
     labels = c(
-      "56(prime)",
-      "64(1wk post-boost)",
-      "73(2wk post-boost)",
-      "87(4wk post-boost)",
-      "115(8wk post-boost)",
-      "143(12wk post-boost)",
-      "171(16wk post-boost)",
-      "199(20wk post-boost)",
-      "226(24wk post-boost)"
+      "Prime only",
+      "1 wk post-boost",
+      "2 wk post-boost",
+      "4 wk post-boost",
+      "8 wk post-boost",
+      "12 wk post-boost",
+      "16 wk post-boost",
+      "20 wk post-boost",
+      "24 wk post-boost"
     )
   ) +
   labs(
+    x = "",
     title = expression(Figure2B ~ Predicted ~ values ~ "for" ~ log[10] ~ S2P ~
                          IgG ~ titer),
     y = expression(log[10] ~ S2P ~ IgG ~ titer)
@@ -391,7 +438,20 @@ plot(plot2) +
     vjust = 1
   ),
   legend.position = "bottom") +
-  facet_wrap( ~ facet)
+  facet_wrap(~ facet)
+
+ggsave(
+  filename = "figures_tables/ELISA/ELISA_Titers_F2B.png",
+  width = 10,
+  height = 8,
+  bg = "white"
+)
+ggsave(
+  filename = "figures_tables/ELISA/ELISA_Titers_F2B.pdf",
+  width = 12,
+  height = 8,
+  bg = "white"
+)
 ```
 
 ### Residual diagnostics when model day as a factor
@@ -408,7 +468,8 @@ dtemp <- filter(d, interval != "PBS" & interval != "0") %>%
   mutate(animal_id = paste0(animal_id , "_", dose))
 
 lm_fit <-
-  lmer(value ~ interval * dose * day + (1 | animal_id) , data = dtemp)
+  lmer(value ~ interval * dose * day + (1 |
+                                          animal_id) , data = dtemp)
 p2 <- assumption_check(lm_fit)
 
 
@@ -444,8 +505,8 @@ summary(
   contrast(
     emm_fit_day,
     list(
-      "Day 73 vs Day 56 \n(2wk post-boost) vs (Prime)" = c(-1, 0, 1, 0, 0, 0, 0, 0, 0),
-      "Day 227 vs Day 56 \n(24wk post-boost) vs (Prime)" = c(-1, 0, 0, 0, 0, 0, 0, 0, 1)
+      "2 weeks post-boost \n vs Pre-boost" = c(-1, 0, 1, 0, 0, 0, 0, 0, 0),
+      "24 weeks post-boost \n vs Pre-boost" = c(-1, 0, 0, 0, 0, 0, 0, 0, 1)
     )
   ),
   infer = TRUE,
@@ -457,16 +518,20 @@ summary(
     .,
     interval = forcats::fct_recode(
       interval,
-      "8 weeks" = "8",
-      "6 weeks" = "6",
-      "4 weeks" = "4",
-      "3 weeks" = "3",
-      "2 weeks" = "2",
-      "1 weeks" = "1"
+      "8-week interval" = "8",
+      "6-week interval" = "6",
+      "4-week interval" = "4",
+      "3-week interval" = "3",
+      "2-week interval" = "2",
+      "1-week interval" = "1"
     )
   ) %>%
   mutate(., interval = factor(.$interval, levels = levels(.$interval)[8:1])) %>%
-  mutate(dose = forcats::fct_recode(factor(dose), "1ug" = "1", "10ug" = "10")) %>%
+  mutate(dose = forcats::fct_recode(
+    factor(dose),
+    "mRNA-1273 1 µg" = "1",
+    "mRNA-1273 10 µg" = "10"
+  )) %>%
   ggplot(aes(x = contrast , y = estimate, colour = interval)) +
   geom_point(position = position_dodge(width = 0.6), size = 2)  +
   geom_errorbar(
@@ -475,7 +540,17 @@ summary(
     position = position_dodge(width = 0.6),
     size = 1
   ) +
-  scale_color_manual(values = panel0) +
+  scale_color_manual(
+    values =   c(
+      modernared,
+      modernablue,
+      modernagreen,
+      modernapurple,
+      modernaorange,
+      modernadarkblue2,
+      modernadarkgray
+    )
+  ) +
   theme_bw() +  theme(panel.grid.major = element_line(colour = "grey100")) +
   scale_y_continuous(breaks = log10(c(0.5, 1, 3, 10, 30, 100)), labels = c(0.5, 1, 3, 10, 30, 100)) +
   geom_hline(yintercept = 0,
@@ -483,7 +558,7 @@ summary(
              lty = "dashed") +
   labs(x = "",
        y = expression(Estimated ~ fold ~ change ~ of ~ S2P ~ IgG ~ titer)) +
-  facet_grid( ~ dose) +
+  facet_grid(~ dose) +
   theme(
     axis.text = element_text(size = 12),
     axis.title = element_text(size = 18),
@@ -493,6 +568,15 @@ summary(
     plot.title = element_text(size = 20),
     legend.position = "bottom"
   )
+
+
+ggsave(filename = "figures_tables/ELISA/ELISA_foldchange_SF2.png",
+       width = 10,
+       height = 8)
+ggsave(filename = "figures_tables/ELISA/ELISA_foldchange_SF2.pdf",
+       width = 10,
+       height = 8)
+
 
 ```
 
@@ -534,20 +618,26 @@ sum_fit %>%
 ```{r, fig.width = 12, fig.height = 18}
 sum_fit %>%
   as_tibble() %>%
-  mutate(contrast = str_replace(contrast, " - ", " / ")) %>%
+  mutate(contrast  = str_remove_all(contrast  , "interval")) %>%
+  mutate(contrast = str_replace(contrast, " - ", " weeks / ")) %>%
+  mutate(contrast = ifelse(
+    str_detect(contrast, "1"),
+    paste(contrast, "week"),
+    paste(contrast, "weeks")
+  )) %>%
   mutate(day = as.factor(day)) %>%
   mutate(
     day = forcats::fct_recode(
       factor(day),
-      "Day 56 \n(Prime)" = "56",
-      "Day 64 \n(1wk post-boost)" = "64",
-      "Day 73 \n(2wk post-boost)" = "73",
-      "Day 87 \n(4wk post-boost)" = "87",
-      "Day 115 \n(8wk post-boost)" = "115",
-      "Day 143 \n(12wk post-boost)" = "143",
-      "Day 171 \n(16wk post-boost)" = "171",
-      "Day 199 \n(20wk post-boost)" = "199",
-      "Day 227 \n(24wk post-boost)" = "226"
+      "Prime only" = "56",
+      "1 wk post-boost" = "64",
+      "2 wk post-boost" = "73",
+      "4 wk post-boost" = "87",
+      "8 wk post-boost" = "115",
+      "12 wk post-boost" = "143",
+      "16 wk post-boost" = "171",
+      "20 wk post-boost" = "199",
+      "24 wk post-boost" = "226"
     )
   ) %>%
   rename(
@@ -556,8 +646,11 @@ sum_fit %>%
     "Adjusted P-value" = "p.value",
     "Day" = "day"
   ) %>%
-  mutate(`Pairwise comparison` = str_remove_all(`Pairwise comparison` , "interval")) %>%
-  mutate(dose = forcats::fct_recode(factor(dose), "1ug" = "1", "10ug" = "10")) %>%
+  mutate(dose = forcats::fct_recode(
+    factor(dose),
+    "mRNA-1273 1 µg" = "1",
+    "mRNA-1273 10 µg" = "10"
+  )) %>%
   ggplot(aes(x = `Pairwise comparison` , y = `Fold change`, color = Day)) +
   geom_point(position = position_dodge(width = 2), size = 3)  +
   geom_errorbar(
@@ -568,7 +661,7 @@ sum_fit %>%
   ) +
   scale_color_manual(
     values = c(
-       "#ABCFE5",
+      "#ABCFE5",
       "#93C4DE",
       "#78B5D8",
       "#60A6D1",
@@ -581,12 +674,12 @@ sum_fit %>%
     )
   ) +
   theme_bw() +  theme(panel.grid.major = element_line(colour = "grey100")) +
-  scale_y_continuous(breaks = log10(c(0.5, 1, 3, 10, 30, 100)), 
+  scale_y_continuous(breaks = log10(c(0.5, 1, 3, 10, 30, 100)),
                      labels = c(0.5, 1, 3, 10, 30, 100)) +
   geom_hline(yintercept = 0,
              color = "darkcyan",
              lty = "dashed") +
-  labs(x = "",
+  labs(x = "Prime-boost dosing interval",
        y = expression(Estimated ~ fold ~ change ~ of ~ S2P ~ IgG ~ titer)) +
   facet_grid(`Pairwise comparison` ~ dose,
              scales = "free",
@@ -604,7 +697,12 @@ sum_fit %>%
     legend.position = "right"
   )
 
-ggsave(filename = "figures_tables/ELISA/ELISA_emmeans.png", width = 16, height=18)
+ggsave(filename = "figures_tables/ELISA/ELISA_emmeans.png",
+       width = 16,
+       height = 18)
+ggsave(filename = "figures_tables/ELISA/ELISA_emmeans.pdf",
+       width = 16,
+       height = 18)
 
 ```
 
