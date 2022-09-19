@@ -453,34 +453,35 @@ writexl::write_xlsx(adcc_p_table, "figures_tables/ADCC/ADCC_P.xlsx")
 #### Supplementary Figure 7: Statistical comparisons of ADCC activity between mRNA-1273 dosing intervals
 
 ```{r, fig.width=8, fig.height=4}
-emmeans_plot <- contrast(
-  emmeans(
-    bfit,
-    ~ dosing_interval_weeks | dose,
-    re_formula = ~ day,
-    allow_new_levels = TRUE
-  ),
-  method = "revpairwise",
-  adjust = "bonferroni"
-) %>%
-  plot() +
-  geom_vline(aes(xintercept = 0), lty = 2, color = modernared) +
-  labs(x = "Estimated fold change", y = "Contrasted prime-boost dosing intervals") +
-  scale_x_continuous(labels = ~ 2 ^ .x) +
-  scale_y_discrete(labels = ~ str_remove_all(.x, "dosing_interval_weeks") %>%
-                     str_replace("-", "/") %>%
-                     stringi::stri_replace_all(regex = "([[:digit:]])", replacement = "$1 weeks") %>%
-                     str_replace(pattern = "1 weeks", "1 week")) +
+rg <- ref_grid(bfit)
+emm_draws <- emmeans(rg, ~ dosing_interval_weeks | dose) %>%
+  contrast("revpairwise") %>%
+  gather_emmeans_draws()
+
+emmeans_plot <- summarize(emm_draws,
+          mean = 2 ^ mean(.value),
+          lCI = 2 ^ quantile(.value, .05) ) %>%
+  ggplot(aes(x = mean, y = contrast)) +
+  geom_point() +
+  geom_errorbar(aes(xmin = lCI, xmax = Inf)) +
+  geom_vline(aes(xintercept = 1), col = modernared, lty = 2) +
   facet_wrap(
     ~ dose,
-    labeller = labeller(.rows = ~ paste0("mRNA-1273 ", .x, "ug")),
+    labeller = labeller(.cols = ~ paste0("mRNA-1273", .x, "ug")),
     strip.position = "right",
     nrow = 2
   ) +
+  labs(x = "Estimated fold change", y = "Contrasted prime-boost dosing intervals") +
+  scale_x_continuous(trans = "log2", breaks = c(1,2,4,16,128)) +
+  scale_y_discrete(
+    labels = ~ str_remove_all(.x, "dosing_interval_weeks") %>%
+      str_replace("-", "/") %>%
+      stringi::stri_replace_all(regex = "([[:digit:]])", replacement = "$1 weeks") %>%
+      str_replace(pattern = "1 weeks", "1 week")
+  ) +
   theme_bw()
-
-print(emmeans_plot)
 ```
+
 
 ```{r, echo = FALSE}
 ggsave(emmeans_plot, filename = "figures_tables/ADCC/ADCC_tests.pdf", width = 8, height = 4, device = cairo_pdf)
