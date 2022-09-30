@@ -26,7 +26,7 @@ modernacolors <- function() {
 }
 
 # function to check residual 
-assumption_check <- function(lm_fit){
+assumption_check <- function(lm_fit, response){
   qq <- 
     ggplot(data = tibble("residuals" = residuals(lm_fit)), aes(sample = residuals))+
     stat_qq() +
@@ -43,6 +43,21 @@ assumption_check <- function(lm_fit){
     ggtitle("Residual vs fitted") +
     theme_minimal()
   
-  cowplot::plot_grid(plotlist = list(qq, res_vs_fitted), nrow = 1, ncol = 2)
+  res_hist <-
+    ggplot(data = data.frame(residuals = residuals(lm_fit)),aes( residuals)) +
+    geom_histogram()+
+    labs(x = "Residual") +
+    ggtitle("Residual histogram") +
+    theme_minimal()
+  
+  observed_fitted <-
+    ggplot(data = data.frame(Fitted.values = predict(lm_fit, type = "response"), "Observed" = response )) +
+    #gratia::observed_fitted_plot(lm_fit)+
+    geom_point(aes( x = Fitted.values,
+                    y = Observed))+
+    theme_minimal()+
+    geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "darkcyan")
+  
+  cowplot::plot_grid(plotlist = list(qq, res_vs_fitted,   res_hist,  observed_fitted  ), nrow = 2, ncol = 2)
 }
 

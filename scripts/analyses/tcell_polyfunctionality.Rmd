@@ -324,7 +324,7 @@ cowplot::save_plot(
   plot = cowplot::plot_grid(plotlist = barp),
   nrow = 4,
   ncol = 2,
-  base_width = 6, base_height = 1.5
+  base_width = 6, base_height = 1.75
 )
 ```
 
@@ -400,29 +400,35 @@ names(fits) <- ls(pattern = "f[[:digit:]]")
 
 ### Residual plots
 
-Since the data are modeled using a generalized linear model assuming a distribution that contains both discrete and continuous components, normalized randomized quantile residuals (RQRs) are used in residual diagnostic plots.
+Since the data are modeled using a generalized linear model assuming a distribution that contains both discrete and continuous components, normalized randomized quantile residuals (RQRs) are used in residual diagnostic plots. The fitted vs. observed plot is omitted, since the use of RQRs makes this diagnostic misleading.
 
-```{r, fig.width = 6, fig.height = 8}
-par(mfrow = c(3,2))
+```{r, fig.width = 10, fig.height = 6}
+par(mfrow = c(3,3))
 iwalk(f4, ~ {
   plot(fitted(.x), residuals(.x), xlab = "Fitted values", ylab = "RQRs", main = paste0("Residual plots for CD4+ T cells with ", .y, "\ncytokine(s) expressed"))
   abline(h = 0, col = "tomato2", lty = 2)
+  
   qqnorm(residuals(.x));
   qqline(residuals(.x))
+  
+  hist(residuals(.x), xlab = "RQRs", main = "Histogram of RQRs")
   })
 ```
 
-```{r, fig.width = 6, fig.height = 8}
-par(mfrow = c(3,2))
+```{r, fig.width = 10, fig.height = 6}
+par(mfrow = c(3,3))
 iwalk(f8, ~ {
   plot(fitted(.x), residuals(.x), xlab = "Fitted values", ylab = "RQRs", main = paste0("Residual plots for CD8+ T cells with ", .y, "\ncytokine(s) expressed"))
   abline(h = 0, col = "tomato2", lty = 2)
   qqnorm(residuals(.x));
   qqline(residuals(.x))
+  hist(residuals(.x), xlab = "RQRs", main = "Histogram of RQRs")
   })
 ```
 
 ### Supplementary Figures 9-10: Statistical comparisons of CD4+ and CD8+ T cell cytokine polyfunctionality
+
+Each black dot corresponds to the estimated odds ratio for the contrasted prime-boost dosing interval. Lavender bars are 95% CIs on the estimated contrast.
 
 ```{r, fig.width = 11.8, fig.height = 3.85}
 #-------------------------------------------------------------------------------
@@ -509,6 +515,7 @@ pvals <- imap_dfr(em_tables, ~ {
     mutate(tcell = .y)
 }) %>%
   dplyr::select(contrast, odds.ratio, day, tcell, num_cytokines, p.value) %>%
+  mutate(odds.ratio = round(odds.ratio, digits = 3)) %>% 
   rename(
     "Pairwise comparison" = "contrast",
     "Odds ratio" = "odds.ratio",

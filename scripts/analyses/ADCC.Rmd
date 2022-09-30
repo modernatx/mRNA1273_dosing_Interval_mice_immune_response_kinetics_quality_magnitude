@@ -30,6 +30,7 @@ library(stringr)
 library(readxl)
 library(brms)
 library(mgcv)
+library(mgcViz)
 library(nlme)
 library(cowplot)
 library(tidybayes)
@@ -39,6 +40,7 @@ library(DT)
 library(stringi)
 source("scripts/utils/utils.R")
 modernacolors()
+map <- purrr::map
 ```
 
 ## Read in dataset
@@ -53,7 +55,7 @@ d <- readxl::read_xlsx("processed_data/ADCC.xlsx")
 
 ```{r, fig.width=10, fig.height = 4}
 # Visualize the full dataset ---------------------------------------------------
-p_raw <- filter(d, dose > 0) %>%
+d_plot <- filter(d, dose > 0) %>%
   mutate(dosing_interval_weeks = as.character(dosing_interval_weeks)) %>%
   mutate(
     dosing_interval_weeks = case_when(
@@ -91,8 +93,9 @@ p_raw <- filter(d, dose > 0) %>%
       "6-week interval" = "6 weeks",
       "8-week interval" = "8 weeks"
     )
-  ) %>% 
-  ggplot(aes(
+  )
+
+p_raw <- ggplot(d_plot, aes(
     x = day,
     y = AUC,
     fill = day,
@@ -117,7 +120,6 @@ p_raw <- filter(d, dose > 0) %>%
   ) +
   scale_fill_manual(
     values = c(
-      modernadarkgray,
       modernadarkblue,
       modernaorange,
       modernapurple,
@@ -125,7 +127,8 @@ p_raw <- filter(d, dose > 0) %>%
       modernablue,
       modernared,
       modernalightgray,
-      modernalightred
+      modernalightred,
+      "grey60"
     )
   ) +
   scale_y_continuous(breaks = 10^(2:6),
@@ -143,7 +146,56 @@ p_raw <- filter(d, dose > 0) %>%
   theme(
     axis.text.x = element_text(angle = 45, hjust=1, vjust = 1)
   )
+
 print(p_raw)
+```
+
+## Animal-level Antibody Fc-effector Function Responses by Dosing Interval
+
+An alternative view of the data that displays trends across dosing interval instead of across time post-boost.
+
+```{r, fig.width=10, fig.height = 4}
+p_raw2 <- ggplot(d_plot, aes(
+    x = dosing_interval_weeks,
+    y = AUC,
+    fill = day,
+    group = day
+  )) +
+  geom_point(
+    position = position_dodge(width = 1),
+    pch = 21,
+    size = 2,
+    show.legend = FALSE
+  ) +
+  scale_fill_manual(
+    values = c(
+      modernadarkblue,
+      modernaorange,
+      modernapurple,
+      modernagreen,
+      modernablue,
+      modernared,
+      modernalightgray,
+      modernalightred,
+      "grey60"
+    )
+  ) +
+  scale_y_continuous(breaks = 10^(2:6),
+                     labels = c(
+                       expression("10" ^ "2"),
+                       expression("10" ^ "3"),
+                       expression("10" ^ "4"),
+                       expression("10" ^ "5"),
+                       expression("10" ^ "6")
+                     ), trans = "log10") +
+  labs(x = "") + 
+  facet_grid(dose ~ day,
+             labeller = labeller(.rows = ~ paste0("mRNA-1273 ", .x, " ug"))) +
+  theme_bw() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust=1, vjust = 1)
+  )
+print(p_raw2)
 ```
 
 ```{r, echo = FALSE}
@@ -154,104 +206,209 @@ ggsave(p_raw, filename = "figures_tables/ADCC/ADCC_dotplot.pdf", width = 13.9, h
 
 ### Model selection and diagnostics
 
-Since the data are structured in the same was as the ELISA data, we first apply the same model that was used for those data. Specifically, we use a generalized additive model (GAM) with a 9-dimensional thin plate spline basis. However, it is clear from the residual diagnostics that this model is not optimal; most notably, there appears to be a trend in the residual variance as the fitted values increase. Since it is important to account for sources of variation as best as possible before doing pairwise comparisons between groups, we sought a more appropriate model.
+Since the data are structured in the same was as the ELISA data, we first apply the same modeling approach that was used for those data. Specifically, we use a generalized additive model (GAM) with a 9-dimensional thin plate spline basis in day. We try 4 different GAMs with varying complexity.
 
-#### GAM
+1.  Dose- and interval-specific main effects, a single day-specific smooth,and a dosing interval random effect in day
+2.  Dose- and interval-specific main effects, a day-specific smooth for each dosing interval, and a dosing interval random effect in day
+3.  Dose- and interval-specific main effects, a day-specific smooth for each dosing interval, and a day-specific smooth for each dose
+4.  A day-specific smooth for each dosing interval, and a day-specific smooth for each dose
+
+Note that we do not consider animal-specific effects as these are not actually repeated measures data.
+
+
+#### GAMs
+
+Here we visualize the estimated smooths for each of the 4 GAMs.
+
+##### GAM 1
 
 ```{r, fig.width = 8, fig.height = 3}
 #-----------------------------------------------------------------------------
 # Fit the generalized additive model, excluding PBS and prime only group
 #-----------------------------------------------------------------------------
 d_mod <-
-  filter(d, dose > 0 & dosing_interval_weeks != "Prime only") %>%
+  filter(d, dose > 0) %>%
   mutate(dose = factor(dose),
          dosing_interval_weeks = fct_drop(dosing_interval_weeks))
 
-gam_fit <-
+gam_fit1 <-
   mgcv::gam(
-    log2(AUC + 1) ~ dosing_interval_weeks + dose +
-      dose * day * dosing_interval_weeks +
+    log2(AUC + 1) ~ dose*dosing_interval_weeks +
       s(day, k = 9, bs = "tp") +
-      s(dosing_interval_weeks, bs = "re") +
       s(dosing_interval_weeks, day, bs = "re"),
     data = d_mod,
     method = 'REML'
   )
 
-res_df <-
-  tibble(
-    `Pearson residuals` = residuals(gam_fit, type = "pearson"),
-    `Fitted values` = fitted(gam_fit)
+gam_fit2 <-
+  mgcv::gam(
+    log2(AUC + 1) ~ dose*dosing_interval_weeks +
+      s(day, k = 9, bs = "tp", by = dosing_interval_weeks) +
+      s(dosing_interval_weeks, day, bs = "re"),
+    data = d_mod,
+    method = 'REML'
   )
+
+gam_fit3 <-
+  mgcv::gam(
+    log2(AUC + 1) ~ dose*dosing_interval_weeks +
+      s(day, k = 9, bs = "tp", by = dosing_interval_weeks) +
+      s(day, k = 9, bs = "tp", by = dose),
+    data = d_mod,
+    method = 'REML'
+  )
+
+gam_fit4 <-
+  mgcv::gam(
+    log2(AUC + 1) ~
+      s(day, k = 9, bs = "tp", by = dosing_interval_weeks) +
+      s(day, k = 9, bs = "tp", by = dose),
+    data = d_mod,
+    method = 'REML'
+  )
+
+gam_fits <- ls(pattern = "gam_fit[[:digit:]]") %>%
+  purrr::set_names(.) %>%
+  purrr::map(~ eval(ensym(.x)))
+```
+
+##### GAM 1 smooths
+
+```{r, fig.width = 10, fig.height=3}
+vizs <- purrr::map(gam_fits, ~ mgcViz::getViz(.x, nsim = 100))
+
+map(1:2, ~ {
+  plot(sm(vizs[[1]], .x)) +
+  l_fitLine(color = "grey40", lty = 1) +
+  l_ciPoly(fill = modernablue, alpha= 0.4) +
+  labs(x = "Day") +
+  theme_bw()
+}) %>%
+  map("ggObj") %>%
+  map(~ .x + theme(text = element_text(size = 8))) %>%
+  plot_grid(plotlist = ., nrow = 1)
+```
+
+
+##### GAM 2 smooths
+
+```{r, fig.width = 10, fig.height=5}
+map(1:8, ~ {
+  plot(sm(vizs[[2]], .x)) +
+  l_fitLine(color = "grey40", lty = 1) +
+  l_ciPoly(fill = modernablue, alpha= 0.4) +
+  labs(x = "Day") +
+  theme_bw()
+}) %>%
+  map("ggObj") %>%
+  map(~ .x + theme(text = element_text(size = 8))) %>%
+  plot_grid(plotlist = ., nrow = 2)
+```
+
+
+##### GAM 3 smooths
+
+
+```{r, fig.width = 10, fig.height=9}
+map(1:9, ~ {
+  plot(sm(vizs[[3]], .x)) +
+  l_fitLine(color = "grey40", lty = 1) +
+  l_ciPoly(fill = modernablue, alpha= 0.4) +
+  labs(x = "Day") +
+  theme_bw()
+}) %>%
+  map("ggObj") %>%
+  map(~ .x + theme(text = element_text(size = 8))) %>%
+  plot_grid(plotlist = ., nrow = 3)
+```
+
+##### GAM 4 smooths
+
+```{r, fig.width = 10, fig.height=9}
+map(1:9, ~ {
+  plot(sm(vizs[[4]], .x)) +
+  l_fitLine(color = "grey40", lty = 1) +
+  l_ciPoly(fill = modernablue, alpha= 0.4) +
+  labs(x = "Day") +
+  theme_bw()
+}) %>%
+  map("ggObj") %>%
+  map(~ .x + theme(text = element_text(size = 8))) %>%
+  plot_grid(plotlist = ., nrow = 3)
+```
+
+##### Residual diagnostics 
+
+```{r, fig.height = 7, fig.width=8}
+res_df <-
+  imap_dfr(gam_fits, ~ {
+    tibble(
+      `Pearson residuals` = residuals(.x, type = "pearson"),
+      `Fitted values` = fitted(.x),
+      `Observed values` = .x$y
+    ) %>%
+      bind_cols(d_mod) %>%
+      mutate(Model = .y)
+  })
+  
 
 cowplot::plot_grid(
   ggplot(res_df, aes(sample = `Pearson residuals`)) +
     stat_qq(pch = 21, fill = modernalightgray) +
     stat_qq_line(lty = 2, col = modernaorange) +
-    labs(x = "Theoretical quantiles", y = "Sample quantiles", title = "Q-Q plot for GAM") +
+    labs(
+      x = "Theoretical quantiles",
+      y = "Sample quantiles",
+      title = "Q-Q plot for GAMs"
+    ) +
+    facet_wrap(~ Model, scales = "free") +
     theme_bw(),
   ggplot(res_df, aes(x = `Fitted values`, y = `Pearson residuals`)) +
     geom_point(pch = 21, fill = modernalightgray) +
     geom_hline(aes(yintercept = 0), lty = 2, color = modernaorange) +
     labs(title = "Residuals vs. Fitted values") +
-    theme_bw(
-    )
+    facet_wrap(~ Model, scales = "free") +
+    theme_bw(),
+  ggplot(res_df, aes(x = `Pearson residuals`)) +
+    geom_histogram() +
+    labs(title = "Histogram of Pearson Residuals") +
+    facet_wrap(~ Model, scales = "free") +
+    theme_bw(),
+  ggplot(res_df, aes(x = `Fitted values`, y = `Observed values`)) +
+    geom_point(pch = 21, fill = modernalightgray) +
+    geom_abline(aes(intercept = 0, slope = 1), lty = 2, color = modernaorange) +
+    labs(title = "Fitted vs. Observed values") +
+    facet_wrap(~ Model, scales = "free") +
+    theme_bw(),
+  nrow = 2
 )
 ```
 
-#### Linear mixed-effects model
 
-Since the GAM model was insufficient on these data, we switch instead to a linear mixed-effects (LME) model that allowed for non-stationary variance that changes as a function of the number of days post boost.
+##### GAM model selection criteria
 
-```{r, fig.width = 8, fig.height = 3}
-lme_fit <- lme(
-  fixed = log2(AUC + 1) ~ dose * dosing_interval_weeks,
-  random =  ~ 1 | day,
-  weights = varExp(form = ~ day),
-  data = d_mod,
-  method = 'REML'
-)
-
-res_df2 <-
-  tibble(
-    `Pearson residuals` = residuals(lme_fit, type = "pearson"),
-    `Fitted values` = fitted(lme_fit)
-  )
-
-cowplot::plot_grid(
-  ggplot(res_df2, aes(sample = `Pearson residuals`)) +
-  stat_qq(pch = 21, fill = modernalightgray) +
-  stat_qq_line(lty = 2, col = modernaorange) +
-  labs(x = "Theoretical quantiles", y = "Sample quantiles", title = "Q-Q plot for LME model") +
-  theme_bw(),
-ggplot(res_df2, aes(x = `Fitted values`, y = `Pearson residuals`)) +
-  geom_point(pch = 21, fill = modernalightgray) +
-  geom_hline(aes(yintercept = 0), lty = 2, color = modernaorange) +
-  labs(title = "Residuals vs. Fitted values") +
-  theme_bw()
-)
+```{r}
+imap_dfr(gam_fits, ~ tibble(
+  Model = .y,
+  AIC = round(AIC(.x), digits = 2),
+  BIC = round(BIC(.x), digits = 2)
+)) %>%
+  DT::datatable()
 ```
 
-The fitted GAM model has:
+It is clear that GAM fit 3 is the preferred model of those explored based off of AIC, BIC, and residual diagnostics. However, one remaining issue with this model is the heterogeneous variance, which is especially visible in the fitted values vs. residuals plot. That is, we observe some heteroskedasticity in the residuals, as variance appears to be higher at earlier timepoints, and lower at later timepoints. This is a challenging feature to incorporate into a frequentist model when we want to obtain well-calibrated uncertainty (for contrast tests) in more complex regression settings. Therefore, we implement a Bayesian GAM akin to the optimal GAM fit 3, while also accounting for heteroskedasticity.
 
--   AIC = `r round(AIC(gam_fit), digits = 2)`
--   BIC = `r round(BIC(gam_fit), digits = 2)`
-
-The fitted LME model, which accounts for day-specific variance, has:
-
--   AIC = `r round(AIC(lme_fit), digits = 2)`
--   BIC = `r round(BIC(lme_fit), digits = 2)`
-
-It is clear that the LME fit is much better than the GAM based off of AIC, BIC, and residual diagnostics. Thus, we opt to proceed with a model akin to the LME model. However, one problem with the LME model is that, for more complicated random effects structures (e.g. many random effects, heterogeneous variance), the variance parameters of each of the random effects becomes unreliable. This is not a problem for mean prediction, as we marginalize out the random effects. However, we are interesting in capturing the effects of the heterogeneous variances in days post-boost when comparing differences between groups. Therefore, we need a way to more reliably estimate these random effect variances. Though this is a challenge in the frequentist framework, it is not in the Bayesian setting. Therefore, we implement a Bayesian LME akin to the frequentist LME shown above.
-
-#### Bayesian LME
+#### Bayesian GAM
 
 ```{r}
 # set up a Bayesian model so that we may have better-calibrated variance estimates
 #   for hypothesis testing
 form <- brms::brmsformula(
-  # main effects and day-specific intercept
-  log2(AUC+1) ~ dose * dosing_interval_weeks + (1 | day),
+  # we include the "day" effect here because `brms` treats smooths as "wiggling" about
+  # the main effects, while `mgcv`does not
+  log2(AUC + 1) ~ day*dose*dosing_interval_weeks +
+      s(day, k = 9, bs = "tp", by = dosing_interval_weeks) +
+      s(day, k = 9, bs = "tp", by = dose),
   # model the heteroskedastic variance in day
   sigma ~ day
 )
@@ -262,6 +419,7 @@ form <- brms::brmsformula(
 # see this with `get_prior(form, d_mod)`
 ```
 
+
 ```{r, results = 'hide'}
 bfit <-
   brms::brm(
@@ -271,17 +429,21 @@ bfit <-
     iter = 4000,
     warmup = 1500,
     seed = 1,
+    thin = 2,
     chains = 4,
-    cores = 2
+    cores = 4
   )
 ```
 
-Residual diagnostics from the bayesian LME closely agree with those from the frequentist LME. (For the residuals vs. fitted values plot, median residuals plus the 66% and 95% CIs are shown.)
 
-```{r, fig.width = 8, fig.height = 3}
+##### Residual diagnostics
+
+Residual diagnostics from the Bayesian GAM look good, with homoskedastic Pearson residuals. (For the residuals vs. fitted values plot, median residuals plus the 66% and 95% CIs are shown.)
+
+```{r, fig.width = 6, fig.height = 2.5}
 cowplot::plot_grid(
   d_mod %>%
-  add_residual_draws(bfit, ndraws = 100, type = "pearson") %>%
+  add_residual_draws(bfit, ndraws = 50, type = "pearson") %>%
   median_qi() %>%
   ggplot(aes(sample = .residual)) +
   geom_qq(shape = 16, fill = modernalightgray) +
@@ -289,10 +451,10 @@ cowplot::plot_grid(
   labs(
     x = "Theoretical quantiles",
     y = "Sample quantiles",
-    title = "Q-Q plot for Bayesian\nLME model") +
+    title = "Q-Q plot for Bayesian\nGAM model") +
   theme_bw(),
   full_join(
-  tidybayes::add_residual_draws(d_mod, bfit, ndraws = 100, type = "pearson"),
+  tidybayes::add_residual_draws(d_mod, bfit, ndraws = 50, type = "pearson"),
   tibble(Estimate = predict(bfit)[,"Estimate"]) %>% mutate(.row = 1:n())
 ) %>%
   ggplot(aes(x = Estimate, y = .residual)) +
@@ -303,9 +465,79 @@ cowplot::plot_grid(
 )
 ```
 
+
+##### Posterior predictive checks
+
+To further diagnose this model, we also show 2 posterior predictive checks. Panel **A** displays the observed data distribution vs. 50 random samples from the fitted distribution. Panel **B** shows the empirical cumulative distribution function of the observed data vs. 50 random samples from the fitted distribution. We observe that our observed distribution lies within the range of distributions sampled from the posterior.
+
+```{r, fig.width = 8, fig.height = 2}
+plot_grid(
+  pp_check(bfit, ndraws = 50),
+  pp_check(bfit, type = "ecdf_overlay"),
+  labels = c("A", "B"),
+  nrow = 1
+)
+```
+
+##### Bayesian GAM smooths
+
+The estimated conditional effects for dose and dosing interval are shown. 
+
+```{r, fig.width=10, fig.height=3}
+condEff <- conditional_effects(
+  bfit,
+  effects = c("day:dose", "day:dosing_interval_weeks"),
+  ndraws = 50
+)
+
+cond1_plot <- ggplot(condEff[[1]], aes(x = day, y = 2^estimate__-1)) +
+  geom_line(aes(color = dose)) +
+  geom_ribbon(aes(fill = dose, ymin = 2^lower__-1, ymax =2^upper__-1), alpha = 0.3) +
+  labs(fill = "Dose (ug)", color = "Dose (ug)", x = "Day", y = "AUC") +
+  scale_fill_manual(values = c("grey60", modernablue)) +
+  scale_color_manual(values = c("grey60", modernablue)) +
+  scale_y_continuous(trans = "log10") +
+  theme_bw()
+
+cond2_plot <- ggplot(condEff[[2]], aes(x = day, y = 2^estimate__-1)) +
+  geom_line(aes(color = dosing_interval_weeks)) +
+  geom_ribbon(aes(fill = dosing_interval_weeks, ymin = 2^lower__-1, ymax = 2^upper__-1), alpha = 0.3) +
+  scale_y_continuous(trans = "log10") +
+  scale_fill_manual(
+    values = c(
+      modernadarkblue,
+      modernaorange,
+      modernapurple,
+      modernagreen,
+      modernablue,
+      modernared,
+      modernalightgray,
+      modernalightred,
+      "grey60"
+    )
+  ) +
+  scale_color_manual(
+    values = c(
+      modernadarkblue,
+      modernaorange,
+      modernapurple,
+      modernagreen,
+      modernablue,
+      modernared,
+      modernalightgray,
+      modernalightred,
+      "grey60"
+    )
+  ) +
+  labs(fill = "Dosing interval\n(weeks)", color = "Dosing interval\n(weeks)", x = "Day", y = "AUC") +
+  theme_bw()
+
+plot_grid(cond1_plot, cond2_plot, nrow = 1)
+```
+
 ## Model-based group-wise analyses
 
-We proceed with making pairwise group comparisons using the Bayesian LME model.
+We proceed with making pairwise group comparisons using the Bayesian GAM.
 
 ### Figure 3: Model-Based Antibody Fc-effector Function Responses
 
@@ -314,13 +546,13 @@ pred.bayes <- as_tibble(predict(bfit))
 
 trend_plot <- bind_cols(d_mod, pred.bayes) %>%
   mutate(dosing_interval_weeks = paste0(dosing_interval_weeks, "-week interval")) %>%
-  ggplot(aes(x = day, y=2^Estimate-1)) +
+  ggplot(aes(x = day, y=2^Estimate)) +
   geom_line(aes(color = dosing_interval_weeks)) +
   geom_ribbon(
     aes(
       x = day,
-      ymin = 2 ^ Q2.5 - 1,
-      ymax = 2 ^ Q97.5 - 1,
+      ymin = 2 ^ Q2.5,
+      ymax = 2 ^ Q97.5,
       fill = dosing_interval_weeks
     ),
     alpha = 0.3,
@@ -333,7 +565,8 @@ trend_plot <- bind_cols(d_mod, pred.bayes) %>%
       modernapurple,
       modernagreen,
       modernablue,
-      modernared
+      modernared,
+      "grey60"
     )
   ) +
   scale_fill_manual(
@@ -343,7 +576,8 @@ trend_plot <- bind_cols(d_mod, pred.bayes) %>%
       modernapurple,
       modernagreen,
       modernablue,
-      modernared
+      modernared,
+      "grey60"
     )
   ) +
   scale_y_continuous(
@@ -415,7 +649,7 @@ wide <- epreds %>%
   ungroup()
 
 combos <- names(wide) %>%
-  magrittr::extract(str_detect(., "[[:digit:]]")) %>%
+  magrittr::extract(str_detect(., "[[:digit:]]|Prime")) %>%
   combn(2)
 
 group_comparisons <- array_branch(combos, margin = 2) %>%
@@ -437,8 +671,9 @@ group_comparisons <- array_branch(combos, margin = 2) %>%
 adcc_p_table <- group_comparisons %>%
   unite("Contrast", x, y, sep = "-week interval / ") %>%
   group_by(Contrast) %>%
-  mutate(Contrast = paste0(Contrast, "-week interval"),
+  mutate(Contrast = ifelse(str_detect(Contrast, "Prime"), Contrast, paste0(Contrast, "-week interval")),
          P.adjusted = round(p.adjust(`P(x > y)`, method = "bonferroni"), digits = 4),
+         `P(x > y)` = round(`P(x > y)`, digits = 4),
          .before = 1) %>%
   rename("Contrast (x / y)" = "Contrast") %>%
   relocate(`Contrast (x / y)`, `P(x > y)`)
@@ -452,7 +687,9 @@ writexl::write_xlsx(adcc_p_table, "figures_tables/ADCC/ADCC_P.xlsx")
 
 #### Supplementary Figure 7: Statistical comparisons of ADCC activity between mRNA-1273 dosing intervals
 
-```{r, fig.width=8, fig.height=4}
+Each black dot corresponds to the estimated fold change for the contrasted prime-boost dosing interval. Error bars are 95% CIs on the estimated contrast.
+
+```{r, fig.width=8, fig.height=4.75}
 rg <- ref_grid(bfit)
 emm_draws <- emmeans(rg, ~ dosing_interval_weeks | dose) %>%
   contrast("revpairwise") %>%
@@ -480,11 +717,11 @@ emmeans_plot <- summarize(emm_draws,
       str_replace(pattern = "1 weeks", "1 week")
   ) +
   theme_bw()
+print(emmeans_plot)
 ```
 
-
 ```{r, echo = FALSE}
-ggsave(emmeans_plot, filename = "figures_tables/ADCC/ADCC_tests.pdf", width = 8, height = 4, device = cairo_pdf)
+ggsave(emmeans_plot, filename = "figures_tables/ADCC/ADCC_tests.pdf", width = 8, height = 4.75, device = cairo_pdf)
 ```
 
 ## Session Information

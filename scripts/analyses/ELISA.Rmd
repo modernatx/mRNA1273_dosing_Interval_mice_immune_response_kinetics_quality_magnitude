@@ -29,6 +29,8 @@ library(ggpubr)
 library(pzfx)
 library(DT)
 library(cowplot)
+library(gratia)
+library(cenGAM)
 source("scripts/utils/utils.R")
 modernacolors()
 ```
@@ -242,19 +244,37 @@ cowplot::plot_grid(
   nrow = 2,
   ncol = 1
 )
-
-#ggsave(filename = "figures_tables/ELISA/plot_raw.png", width = 18, height=16)
-#ggsave(filename = "figures_tables/ELISA/plot_raw.pdf", width = 18, height=16)
+```
+```{r echo = FALSE}
+ggsave(filename = "figures_tables/ELISA/plot_raw.png", width = 18, height=16)
+ggsave(filename = "figures_tables/ELISA/plot_raw.pdf", width = 18, height=16)
 ```
 
 ## Model fitting
+### Model selection
 
-### Residual diagnostics when model day as a continuous variable
-```{r, fig.width = 12, fig.height = 6}
+We use a generalized additive model (GAM) with a 9-dimensional thin plate spline basis in day. We try 4 different GAMs with varying complexity.
+
+  + Model A: a GAM censored regression model that accounts for censored values in prime-only group, dosing interval group-specific smooth nonlinear trend in days, a dose-specific smooth nonlinear trend in days, animal-specific random effect, and animal_specific effect of day
+
+  + Model B: a GAM regression model that exclude the prime-only group, with dosing interval group-specific smooth nonlinear trend in days, a dose-specific smooth nonlinear trend in days, animal-specific random effect, and animal_specific effect of day
+
+  + Model C: a GAM regression model that exclude the prime-only group, with animal-specific random effect, and animal_specific effect of day
+
+  + Model D: a GAM regression model that exclude the prime-only group, with a single day-specific smooth, dosing interval specific random effect, and dosing interval specific effect of day
+
+Model B is the best model among the four choices. 
+  
+  + Model A does not fit as good as Model B which excluded the prime-only data. Note prime-only data has a different trend as other dosing interval groups with some censored observations. 
+  + Model C that is without smoothing splines does not fit as good as Model B that has smoothing splines. 
+  + Model B's residual diagnostics look slightly better than Model D. Model D has smaller `BIC` but larger `AIC` than Model B. Based on `AIC` and residual diagnostics, Model B is better than Model D.
+
+
+```{r}
 #-------------------------------------------------------------------------------
 # Fit the model
 #-------------------------------------------------------------------------------
-dtemp <- filter(d, interval != "PBS" & interval != "0") %>%
+dtemp <- filter(d, interval != "PBS") %>%
   mutate(
     dose = factor(dose),
     day = as.numeric(day),
@@ -266,19 +286,94 @@ dtemp <- filter(d, interval != "PBS" & interval != "0") %>%
     animal_unique_id = factor(animal_unique_id)
   )
 
-# fit a gam model
-gam_fit <-
+# fit a gam censored model that includes prime-only group with dosing interval group-specific smooth nonlinear trend in days, a dose-specific smooth nonlinear trend in days, animal-specific random effect, and animal_specific effect of day
+gam_fit_A <-
+  mgcv::gam(
+    value ~ interval + dose + interval:day +
+      interval:dose +  dose:day + dose:day:interval +
+      s(day, by = dose, bs="tp", k = 9) + s(day, by = interval,bs="tp", k = 9) +
+      s(animal_unique_id, bs = "re") + s(animal_unique_id, day, bs = "re"),
+    data = dtemp,
+    family = tobit1(left.threshold = 1.097),
+    method = 'REML'
+  )
+
+# fit a gam model the same as previous model but without prime-only group (interval = "0") 
+d_mod <-  dtemp %>%
+  filter(interval != "0")%>%
+  droplevels()
+
+gam_fit_B<-
+  mgcv::gam(
+    value ~ interval + dose + interval:day +
+      interval:dose +  dose:day + dose:day:interval +
+      s(day, by = dose, bs="tp", k = 9) + s(day, by = interval, bs="tp", k = 9) +
+      s(animal_unique_id, bs = "re") + s(animal_unique_id, day, bs = "re"),
+    data = d_mod,
+    method = 'REML'
+  )
+
+# fit a gam model without prime-only group (interval = "0") with animal-specific random effect, and animal_specific effect of day
+gam_fit_C <-
+  mgcv::gam(
+    value ~ interval + dose + day + interval:day +
+      interval:dose +  dose:day + dose:day:interval +
+      s(animal_unique_id, bs = "re") + s(animal_unique_id, day, bs = "re"),
+    data = d_mod,
+    method = 'REML'
+  )
+
+# fit a gam model without prime-only group (interval = "0") with a single day-specific smooth, dosing interval specific random effect, and dosing interval specific effect of day
+gam_fit_D <-
   mgcv::gam(
     value ~ interval + dose + s(day, k = 9) + interval:day +
       interval:dose +  dose:day + dose:day:interval +
       s(interval, bs = "re") + s(interval, day, bs = "re") ,
-    data = dtemp,
+    data = d_mod,
     method = 'REML'
   )
 
+```
 
+#### GAMs
+##### Estimated smooths visualization
+
+```{r, fig.width = 12, fig.height = 8}
+plot_grid(gratia::draw(gam_fit_A),  labels = c("A"), vjust = 1) 
+plot_grid(gratia::draw(gam_fit_B),  labels = c("B"), vjust = 1) 
+plot_grid(gratia::draw(gam_fit_C),  labels = c("C"), vjust = 1) 
+plot_grid(gratia::draw(gam_fit_D),  labels = c("D"), vjust = 1) 
+```
+
+##### Residual diagnostics
+```{r, fig.width = 12, fig.height = 8}
+# Residual diagnostics plots
+list(gam_fit_A, gam_fit_B, gam_fit_C, gam_fit_D) %>%
+  map(~assumption_check(.x, .x$model$value))%>%
+  cowplot::plot_grid(plotlist = ., nrow = 2, labels = c("A", "B", "C", "D"))
+
+```
+
+##### AIC and BIC comparison
+```{r}
+AIC(gam_fit_A, gam_fit_B, gam_fit_C, gam_fit_D)%>% 
+  rownames_to_column("Model") %>% 
+  DT::datatable()%>%
+  formatSignif(columns = c( 'df', 'AIC'),
+               digits = 6)
+
+BIC(gam_fit_A, gam_fit_B, gam_fit_C, gam_fit_D)%>% 
+  rownames_to_column("Model") %>% 
+  DT::datatable() %>%
+  formatSignif(columns = c( 'df', 'BIC'),
+               digits = 6)
+```
+
+#### Selected model residual diagnostics
+```{r}
 # Residual diagnostics figure
-p <- assumption_check(gam_fit)
+gam_fit <-  gam_fit_B
+p <- assumption_check(gam_fit, gam_fit$model$value)
 title <-
   ggdraw() + draw_label(
     "ELISA residual diagnostics when model day as a continuous variable",
@@ -293,63 +388,23 @@ plot_grid(
   align = "v"
 )
 
-
-# fit a gam linear model
-gam_fit_linear <-
-  mgcv::gam(
-    value ~ interval + dose + day + interval:day +
-      interval:dose +  dose:day + dose:day:interval +
-      s(interval, bs = "re") + s(interval, day, bs = "re") ,
-    data = dtemp,
-    method = 'REML'
-  )
-
-# fit a gam model at df = 8
-gam_fit_df8 <-
-  mgcv::gam(
-    value ~ interval + dose + s(day, k = 8) + interval:day +
-      interval:dose +  dose:day + dose:day:interval +
-      s(interval, bs = "re") + s(interval, day, bs = "re") ,
-    data = dtemp,
-    method = 'REML'
-  )
-```
-### Diagnostics
-The model without smoothing spline on `day` does not fit as good as the selected model, where the selected model has  AIC = `r round(AIC(gam_fit))` and  BIC = `r round(BIC(gam_fit))` and the model without smoothing spline has AIC = `r round(AIC(gam_fit_linear))` and BIC = `r round(BIC(gam_fit_linear))`.
-
-The selected model has degrees of freedom equals 9 for the smoothing spline, which is the maximum degrees of freedom allowed given the unique covariate combinations. AIC and BIC tests suggested degree of freedom equals 9 has the best fit. The model has df = 8 smoothing spline has AIC = `r round(AIC(gam_fit_df8))` and BIC = `r round(BIC(gam_fit_df8))`. 
-
-Therefore, we add smoothing spline with df = 9 to variable `day`.
-
-```{r, fig.width = 12, fig.height = 6}
-# Residual diagnostics figure
-p <- assumption_check(gam_fit_linear)
-title <-
-  ggdraw() + draw_label(
-    "ELISA residual diagnostics when model day as a continuous variable",
-    x = 0.03,
-    hjust = 0
-  )
-plot_grid(
-  title,
-  p,
-  ncol = 1,
-  rel_heights = c(0.1, 1),
-  align = "v"
-)
-
-
 ```
 
-
+### Residual diagnostics
 ### Figure 2. S2-P-specific Serum Binding IgG Antibody Titers
 ```{r, fig.width=12, fig.height=8}
+
 #-------------------------------------------------------------------------------
 # Figure 2. Spike-specific Serum Binding IgG Antibody Titers
 #-------------------------------------------------------------------------------
-plot1 <- ggemmeans(gam_fit, terms = c("day", "interval", "dose"))
+plot1 <- ggemmeans(gam_fit, terms = c("day", "interval", "dose")) 
+
+F2A <-
 plot(plot1) +
-  scale_color_manual(values = panel0) +
+  scale_color_manual(values = panel0, 
+                     labels = c("1-week interval", "2-week interval", 
+                                "3-week interval", "4-week interval", 
+                                "6-week interval", "8-week interval")) +
   scale_fill_manual(values = panel0) +
   scale_x_continuous(
     breaks = c(56 , 64, 73, 87, 115, 143, 171, 199, 226),
@@ -366,42 +421,22 @@ plot(plot1) +
     )
   ) +
   labs(
-    title = expression(Figure2A ~ Predicted ~ values ~ "for" ~ log[10] ~ S2P ~
-                         IgG ~ titer),
+    title = "", color = "", x = "",
     y = expression(log[10] ~ S2P ~ IgG ~ titer)
   ) +
   theme(panel.grid.major = element_line(colour = "grey100")) +
   theme(
-    axis.text = element_text(size = 12),
     axis.text.x = element_text(
       angle = 45,
       hjust = 1,
       vjust = 1
     ),
-    axis.title = element_text(size = 18),
-    strip.text = element_text(size = 18),
-    legend.text = element_text(size = 16),
-    legend.title = element_text(size = 18),
-    plot.title = element_text(size = 20),
     legend.position = "bottom"
   ) +
-  facet_grid(~ facet)
-ggsave(
-  filename = "figures_tables/ELISA/ELISA_Titers_F2A.png",
-  width = 10,
-  height = 8,
-  bg = "white"
-)
-ggsave(
-  filename = "figures_tables/ELISA/ELISA_Titers_F2A.pdf",
-  width = 12,
-  height = 8,
-  bg = "white"
-)
-
+  facet_grid(~ facet, labeller = labeller(.cols = ~ paste("mRNA-1273", .x, "µg")))
 ```
 
-```{r, fig.width=12, fig.height=8}
+```{r, fig.width=10, fig.height=12}
 # plot effect of dose treating dose as numerical variable
 plot2 <-
   ggemmeans(
@@ -409,8 +444,11 @@ plot2 <-
     terms = c("day", "dose", "interval"),
     condition = c("day", "interval")
   )
+
+F2B <-
 plot(plot2) +
-  #scale_color_manual(values=dosepanel) +
+  scale_color_manual(values = c(modernared, modernablue),
+                     labels = c("mRNA-1273 1 µg", "mRNA-1273 2 µg")) +
   scale_x_continuous(
     breaks = c(56 , 64, 73, 87, 115, 143, 171, 199, 226),
     labels = c(
@@ -427,8 +465,7 @@ plot(plot2) +
   ) +
   labs(
     x = "",
-    title = expression(Figure2B ~ Predicted ~ values ~ "for" ~ log[10] ~ S2P ~
-                         IgG ~ titer),
+    title = "", color = "",
     y = expression(log[10] ~ S2P ~ IgG ~ titer)
   ) +
   theme(panel.grid.major = element_line(colour = "grey100")) +
@@ -438,20 +475,37 @@ plot(plot2) +
     vjust = 1
   ),
   legend.position = "bottom") +
-  facet_wrap(~ facet)
+  facet_wrap(~ facet, labeller = labeller(.cols = ~paste(.x, "week interval")))
+
+Figure2 <-
+cowplot::plot_grid(
+  plotlist = list(F2A, F2B),
+  labels = c("A", "B"),
+  nrow = 2,
+  ncol = 1
+)
+
+Figure2
+```
+
+
+```{r echo=FALSE}
+ggsave(
+  filename = "figures_tables/ELISA/ELISA_Titers_F2.pdf",
+  plot = Figure2,
+  width = 10,
+  height = 12,
+  device = cairo_pdf
+)
 
 ggsave(
-  filename = "figures_tables/ELISA/ELISA_Titers_F2B.png",
+  filename = "figures_tables/ELISA/ELISA_Titers_F2.png",
+  plot = Figure2,
   width = 10,
-  height = 8,
+  height = 12,
   bg = "white"
 )
-ggsave(
-  filename = "figures_tables/ELISA/ELISA_Titers_F2B.pdf",
-  width = 12,
-  height = 8,
-  bg = "white"
-)
+
 ```
 
 ### Residual diagnostics when model day as a factor
@@ -470,7 +524,7 @@ dtemp <- filter(d, interval != "PBS" & interval != "0") %>%
 lm_fit <-
   lmer(value ~ interval * dose * day + (1 |
                                           animal_id) , data = dtemp)
-p2 <- assumption_check(lm_fit)
+p2 <- assumption_check(lm_fit, lm_fit@frame$value)
 
 
 # Residual diagnostics figure
@@ -491,6 +545,8 @@ plot_grid(
 ```
 
 ### Supplementary Figure 1. Predicted Fold-change of Spike-specific Serum Binding IgG Antibody Titers
+Each dot corresponds to the estimated fold change for the contrasted prime-boost dosing interval. Error bars are multivariate t adjusted 95% CIs on the estimated contrast.
+
 ```{r, fig.width=12, fig.height=8}
 # The results indicate that the peak immune response/ titer levels are achieved at 2 weeks post prime
 grid <- ref_grid(lm_fit, cov.keep = c("day", "dose", "interval"))
@@ -568,8 +624,9 @@ summary(
     plot.title = element_text(size = 20),
     legend.position = "bottom"
   )
+```
 
-
+```{r echo = FALSE}
 ggsave(filename = "figures_tables/ELISA/ELISA_foldchange_SF2.png",
        width = 10,
        height = 8)
@@ -598,23 +655,48 @@ sum_fit <-
 
 
 # generate tables
+elisa_p_table <-
 sum_fit %>%
   as_tibble() %>%
+  mutate(day = forcats::fct_recode(
+      factor(day),
+      "0 (pre-dose 2)" = "56",
+      "7 (1)" = "64",
+      "16 (2)" = "73",
+      "30 (4)" = "87",
+      "58 (8)" = "115",
+      "86 (12)" = "143",
+      "114 (16)" = "171",
+      "142 (20)" = "199",
+      "169 (24)" = "226"
+    ))%>%
   dplyr::select(contrast, estimate, day, dose, p.value) %>%
   mutate(estimate = 10 ^ estimate) %>%
-  mutate(contrast = str_replace(contrast, " - ", " / ")) %>%
+  mutate(contrast = str_remove_all(contrast, "interval"),
+         contrast = str_replace(contrast, " - ", " / ")) %>%
   rename(
     "Pairwise comparison" = contrast,
     "Fold change" = "estimate",
     "Adjusted P-value" = "p.value"
   ) %>%
-  filter(`Adjusted P-value`  < 0.05) %>%
-  DT::datatable(caption = "Statistical comparisons of S2-P IgG antibody titer in mice between different mRNA-1273 dosing intervals") %>%
-  formatSignif(columns = c('Fold change', 'Adjusted P-value'),
-               digits = 7)
+  mutate(`Adjusted P-value` = round(`Adjusted P-value`, digits = 6),
+         `Fold change`= round(`Fold change`, digits = 6))  %>%
+  filter(`Adjusted P-value`  < 0.05) 
+  
+
+elisa_p_table %>%
+  DT::datatable(caption = "Statistical comparisons of S2-P IgG antibody titer in mice between different mRNA-1273 dosing intervals")
+
+
+```
+
+```{r echo = FALSE}
+writexl::write_xlsx(elisa_p_table, "figures_tables/ELISA/ELISA_P.xlsx")
 ```
 
 ### Supplementary Figure 4. Statistical comparisons of S2-P IgG Antibody Titers between different mRNA-1273 dosing intervals(Supplementary Table 1 visualization)
+Each dot corresponds to the estimated fold change for the contrasted prime-boost dosing interval. Error bars are multivariate t adjusted 95% CIs on the estimated contrast.
+
 ```{r, fig.width = 12, fig.height = 18}
 sum_fit %>%
   as_tibble() %>%
@@ -697,6 +779,9 @@ sum_fit %>%
     legend.position = "right"
   )
 
+```
+
+```{r echo = FALSE}
 ggsave(filename = "figures_tables/ELISA/ELISA_emmeans.png",
        width = 16,
        height = 18)

@@ -18,9 +18,14 @@ knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
 
 ```{r}
 #-------------------------------------------------------------------------------
-# ANALYSIS OF ADCC DATA
+# ANALYSIS OF ANTIPEG DATA
 #-------------------------------------------------------------------------------
-library(tidyverse)
+library(dplyr)
+library(tidyr)
+library(purrr)
+library(stringr)
+library(magrittr)
+library(ggplot2)
 library(lme4)
 library(merTools)
 library(emmeans)
@@ -49,7 +54,7 @@ d <- readxl::read_xlsx("processed_data/antiPEG.xlsx") %>%
 
 ## Figure 6A-B: Anti-PEG Antibody Responses
 
-```{r, fig.width=9.89, fig.height = 7.89}
+```{r, fig.width=9.89, fig.height = 6}
 # Visualize the full dataset ---------------------------------------------------
 d_dotplot <- d %>%
   mutate(interval = factor(interval, levels = c("PBS", "Prime Only", 1, 2, 3, 4, 6, 8)))
@@ -132,15 +137,15 @@ f <- purrr::map(spl, ~ lmer(log2_titer ~ interval + (1 | dose), data = .x))
 
 The fitted model for IgG has:
 
-+ AIC = `r AIC(f[str_detect(names(f), "IgG")][[1]])`
-+ BIC = `r BIC(f[str_detect(names(f), "IgG")][[1]])`
-+ Conditional adjusted $R^2$ = `r MuMIn::r.squaredGLMM(f[str_detect(names(f), "IgG")][[1]])[,"R2c"]`
++ AIC = `r round(AIC(f[str_detect(names(f), "IgG")][[1]]), digits = 2)`
++ BIC = `r round(BIC(f[str_detect(names(f), "IgG")][[1]]), digits = 2)`
++ Conditional adjusted $R^2$ = `r round(MuMIn::r.squaredGLMM(f[str_detect(names(f), "IgG")][[1]])[,"R2c"], digits = 4)`
 
 and the fitted model for IgM has:
 
-+ AIC = `r AIC(f[str_detect(names(f), "IgM")][[1]])`
-+ BIC = `r BIC(f[str_detect(names(f), "IgM")][[1]])`
-+ Conditional adjusted $R^2$ = `r MuMIn::r.squaredGLMM(f[str_detect(names(f), "IgM")][[1]])[,"R2c"]`
++ AIC = `r round(AIC(f[str_detect(names(f), "IgM")][[1]]), digits = 2)`
++ BIC = `r round(BIC(f[str_detect(names(f), "IgM")][[1]]), digits = 2)`
++ Conditional adjusted $R^2$ = `r round(MuMIn::r.squaredGLMM(f[str_detect(names(f), "IgM")][[1]])[,"R2c"], digits = 4)`
 
 where conditional adjusted $R^2$ is defined as the proportion of variance explained by both the fixed and random effects in the model. The low conditional adjusted $R^2$ arises from the fact that a large proportion of variation in the data comes from within-group animal-to-animal variability, as can be seen in the above dotplots of the raw data.
 
@@ -151,8 +156,8 @@ map(f, summary)
 ```
 ### Residual plots
 
-```{r}
-par(mfrow = c(2, 2))
+```{r, fig.width = 10, fig.height = 4.5}
+par(mfrow = c(2, 4))
 plot(
   fitted(f[[1]]),
   residuals(f[[1]]),
@@ -161,8 +166,20 @@ plot(
   main = names(f)[1]
 )
 abline(h = 0, col = "tomato2")
+
+plot(
+  fitted(f[[1]]),
+  f[[1]]@frame$log2_titer,
+  xlab = "Fitted values",
+  ylab = "Observed values",
+  main = ""
+)
+abline(a = 0, b = 1, col = "tomato2")
+
 qqnorm(residuals(f[[1]]))
 qqline(residuals(f[[1]]))
+
+hist(residuals(f[[1]]), main = "Histogram of residuals", xlab = "residuals")
 
 plot(
   fitted(f[[2]]),
@@ -172,13 +189,27 @@ plot(
   main = names(f)[2]
 )
 abline(h = 0, col = "tomato2")
+
+plot(
+  fitted(f[[2]]),
+  f[[2]]@frame$log2_titer,
+  xlab = "Fitted values",
+  ylab = "Observed values",
+  main = ""
+)
+abline(a = 0, b = 1, col = "tomato2")
+
 qqnorm(residuals(f[[2]]))
 qqline(residuals(f[[2]]))
+
+hist(residuals(f[[2]]), main = "Histogram of residuals", xlab = "residuals")
 ```
 
 ## Model-based group-wise analyses
 
 ### Supplementary Figure 11: Statistical comparisons of anti-PEG IgG and IgM antibody responses between mRNA-1273 dosing intervals over control
+
+Each black dot corresponds to the estimated fold change for the contrasted prime-boost dosing interval against the PBS control. Lavender bars are 95% CIs on the estimated contrast.
 
 ```{r}
 rg <- purrr::map(f, ref_grid)
@@ -221,9 +252,9 @@ antipeg_p_table <-
     "Pairwise comparison" = str_replace(contrast, pattern = " - ", replacement = " / "),
     .before = 1
   ) %>%
-  dplyr::select(`Pairwise comparison`, Antibody, p.value) %>%
-  mutate(Antibody = str_remove_all(Antibody, "anti-PEG | Concentration"), ) %>%
-  rename("Adjusted P-value" = "p.value")
+  dplyr::select(`Pairwise comparison`, Antibody, estimate, p.value) %>%
+  mutate(Antibody = str_remove_all(Antibody, "anti-PEG | Concentration"), estimate = round(2^estimate, digits = 3)) %>%
+  rename("Adjusted P-value" = "p.value", "Fold change" = "estimate")
 DT::datatable(antipeg_p_table)
 ```
 

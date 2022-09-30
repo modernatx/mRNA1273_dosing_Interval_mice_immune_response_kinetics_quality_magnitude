@@ -151,7 +151,7 @@ lambdas <-
 assumption_plots <-
   imap(
     lm_fits ,
-    ~ assumption_check(.x) %>%
+    ~ assumption_check(.x, .x$model$`linkfun(counts)`) %>%
       plot_grid(
         ggdraw() + draw_label(
           paste0("Spleen ", .y, "-specific model residual diagnostics "),
@@ -175,11 +175,10 @@ emmt_dat <-
 
 ### Residual diagnostics for spleen data
 
-```{r, fig.width = 12, fig.height = 6}
+```{r, fig.width = 12, fig.height = 10}
 ggarrange(plotlist = assumption_plots)
 ```
 
-### Figure 4A. Spike-specific Antibody Secreting Cells and Long-Lived Plasma Cells
 
 ```{r, fig.height=8}
 #-------------------------------------------------------------------------------
@@ -315,12 +314,6 @@ box1 <-
   )
 
 
-cowplot::plot_grid(
-  plotlist = list(box1, foldchange1),
-  nrow = 2,
-  ncol = 1,
-  labels = c("A", "B")
-)
 ```
 
 
@@ -347,10 +340,10 @@ sum_elispot <-
   ) %>% as_tibble() %>%
   bind_rows()
 
+ELISpot_P_ST3 <-
 sum_elispot  %>%
   as_tibble() %>%
   dplyr::select(contrast, estimate, p.value) %>%
-  filter(p.value < 0.05) %>%
   mutate(estimate = 10 ^ estimate) %>%
   mutate(contrast = str_replace(contrast, " - ", " / ")) %>%
   rename(
@@ -358,9 +351,12 @@ sum_elispot  %>%
     "Fold change" = "estimate",
     "Adjusted P-value" = "p.value"
   ) %>%
-  DT::datatable(caption = "Statistical comparisons of S2-P–specific ASCs 1 week following dose 2 between mRNA-1273 (10 μg) dosing interval") %>%
-  formatSignif(columns = c('Fold change', 'Adjusted P-value'),
-               digits = 7)
+  mutate(`Adjusted P-value` = round(`Adjusted P-value`, digits = 6),
+         `Fold change`= round(`Fold change`, digits = 6))%>%
+ filter(`Adjusted P-value`< 0.05)
+
+ELISpot_P_ST3 %>%
+  DT::datatable(caption = "Statistical comparisons of S2-P–specific ASCs 1 week following dose 2 between mRNA-1273 (10 μg) dosing interval") 
 
 
 # Supplementary Table 3 visualization
@@ -434,6 +430,9 @@ t3v <-
 
 ```
 
+```{r echo = FALSE}
+writexl::write_xlsx(ELISpot_P_ST3, "figures_tables/ELISpot/ELISpot_P_ST3.xlsx")
+```
 ## Model fitting for BM data
 ```{r}
 #-------------------------------------------------------------------------------
@@ -459,11 +458,11 @@ emmt_dat <-
 ```
 
 ### Residual diagnostics for BM data
-```{r, fig.width = 12, fig.height = 6}
+```{r, fig.width = 12, fig.height = 10}
 assumption_plots <-
   imap(
     lm_fits ,
-    ~ assumption_check(.x) %>%
+    ~ assumption_check(.x, .x$model$`linkfun(counts)`) %>%
       plot_grid(
         ggdraw() + draw_label(
           paste0("BM ", .y, "-specific model residual diagnostics "),
@@ -479,7 +478,10 @@ assumption_plots <-
 ggarrange(plotlist = assumption_plots)
 ```
 
-### Figure 4B. Spike-specific Antibody Secreting Cells and Long-Lived Plasma Cells
+### Figure 4. Spike-specific Antibody Secreting Cells and Long-Lived Plasma Cells
+
+Each dot in the bottom panel of Figure 4 corresponds to the estimated mean for the prime-boost dosing interval. Error bars are 95% CIs on the estimated mean.
+
 
 ```{r, fig.height=8, fig.width=12}
 #-------------------------------------------------------------------------------
@@ -635,8 +637,11 @@ cowplot::plot_grid(
   rel_widths = c(1, 2),
   rel_heights = c(1, 1)
 )
-#ggsave(filename = "figures_tables/ELISpot/ELISpot_boxplot_F4.png", width = 14, height=10)
-#ggsave(filename = "figures_tables/ELISpot/ELISpot_boxplot_F4.pdf", width = 14, height=10)
+```
+
+```{r echo=FALSE}
+ggsave(filename = "figures_tables/ELISpot/ELISpot_boxplot_F4.png", width = 14, height=10)
+ggsave(filename = "figures_tables/ELISpot/ELISpot_boxplot_F4.pdf", width = 14, height=10)
 ```
 
 ### Supplementary Table 4. Statistical comparisons of S2-P–specific LLPCs 4 weeks following dose 2 (Day 87) and 24 weeks following dose 2 (Day 227) between mRNA-1273 (10 μg) dosing intervals.
@@ -662,10 +667,10 @@ emm_elispot_BM <-
   ) %>% as_tibble() %>%
   bind_rows()
 
+ELISpot_P_ST4 <- 
 emm_elispot_BM %>%
   as_tibble() %>%
   dplyr::select(day, contrast, estimate, p.value) %>%
-  filter(p.value < 0.05) %>%
   mutate(day = as.numeric(as.character(day))) %>%
   arrange(day) %>%
   mutate(estimate = 10 ^ estimate) %>%
@@ -676,18 +681,23 @@ emm_elispot_BM %>%
     "Adjusted P-value" = "p.value",
     "Day" = "day"
   ) %>%
-  DT::datatable(
-    caption = "Statistical comparisons of S2-P–specific LLPCs 4 weeks following
-                dose 2 (Day 87) and 24 weeks following dose 2 (Day 227) between mRNA-1273
-                (10 μg) dosing intervals"
-  ) %>%
-  formatSignif(columns = c('Fold change', 'Adjusted P-value'),
-               digits = 7)
+  mutate(`Adjusted P-value` = round(`Adjusted P-value`, digits = 6),
+         `Fold change`= round(`Fold change`, digits = 6))%>%
+ filter(`Adjusted P-value`< 0.05)
 
+ELISpot_P_ST4  %>%
+  DT::datatable(caption = "Statistical comparisons of S2-P–specific LLPCs 4 weeks following
+                dose 2 (Day 87) and 24 weeks following dose 2 (Day 227) between mRNA-1273
+                (10 μg) dosing intervals") 
 ```
 
+```{r echo = FALSE}
+writexl::write_xlsx(ELISpot_P_ST4, "figures_tables/ELISpot/ELISpot_P_ST4.xlsx")
+```
 
 ### Supplementary Figure 5. Statistical comparisons of S2-P-specific Antibody Secreting Cells and Long-Lived Plasma Cells between mRNA-1273 (10 µg) dosing intervals(Supplementary Table 3 and 4 visualization)
+Each dot corresponds to the estimated fold change for the contrasted prime-boost dosing interval. Error bars are multivariate t adjusted 95% CIs on the estimated contrast.
+
 ```{r, fig.width = 16, fig.height=8}
 t4v <-
   emm_elispot_BM %>%
@@ -770,6 +780,8 @@ cowplot::plot_grid(
   ncol = 2,
   rel_widths = c(0.5, 1)
 )
+```
+```{r echo=FALSE}
 ggsave(filename = "figures_tables/ELISpot/emmeans_BM_spleen.png",
        width = 16,
        height = 8)

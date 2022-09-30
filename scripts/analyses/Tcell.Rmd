@@ -29,6 +29,7 @@ library(hrbrthemes)
 library(DT)
 library(ggpubr)
 library(cowplot)
+library(Cairo)
 source("scripts/utils/utils.R")
 modernacolors()
 ```
@@ -128,14 +129,13 @@ emmt_dat2 <-
   separate(info, c("cytokine", "coating"), "_")
 ```
 
-
 ### Residual diagnostics for CD4+ data
 
-```{r, fig.height = 8, fig.width=12}
+```{r, fig.height = 16, fig.width=16}
 assumption_plots <-
   imap(
     fits ,
-    ~ assumption_check(.x) %>%
+    ~ assumption_check(.x, .x$y) %>%
       plot_grid(
         ggdraw() + draw_label(
           paste0(str_replace(.y, "_", ", " ), "-specific"),
@@ -152,14 +152,23 @@ ggarrange(plotlist = assumption_plots)
 ```
 
 
-### Supplementary Figure 4AB: CD4 fold change and heatmap
+### Supplementary Figure 5AB: CD4 fold change and heatmap
 ```{r}
 #-------------------------------------------------------------------------------
-# Supplementary Figure 4A: CD4 fold change
+# Supplementary Figure 5A: CD4 fold change
 #-------------------------------------------------------------------------------
-plots <-
+plots4 <-
   emmt_dat2 %>%
-  mutate(day = as.numeric(as.character(day))) %>%
+  filter(coating %in% c("S1", "S2")) %>%
+   mutate(
+    day = forcats::fct_recode(
+      factor(day),
+      "1 week post-boost" = "64",
+      "4 weeks post-boost" = "87",
+      "12 weeks post-boost" = "143",
+      "24 weeks post-boost" = "227"
+    )
+  ) %>%
   mutate(
     interval = forcats::fct_recode(
       interval,
@@ -175,7 +184,7 @@ plots <-
   split(.$cytokine) %>%
   imap(
     ~ .x %>%
-      filter(day == 227) %>%
+      filter(day == "24 weeks post-boost") %>%
       ggplot(aes(
         x = interval, y = response * 100, color = interval
       )) +
@@ -189,25 +198,18 @@ plots <-
       scale_color_manual(values = panel0) +
       theme_bw() +  theme(panel.grid.major = element_line(colour = "grey100")) +
       facet_grid(day ~ coating, space = "free_x", scales = "free") +
-      labs(title = paste("CD4+ T cells (", .y, ")"),
-           subtitle = "24 weeks after the boost dose according to antigen and
-           mRNA-1273 dosing interval",
-           x = "", y = "Estimated % of CD4+ T cells") +
+      labs(title = paste0("CD4+ T cells (", .y, ")"),
+           x = "", y = "Estimated CD4+ T cells, %") +
       theme(
-        axis.text = element_text(size = 9),
         axis.text.x = element_text(
           angle = 45,
           hjust = 1,
           vjust = 1
         ),
-        axis.title = element_text(size = 14),
-        strip.text = element_text(size = 10),
-        legend.text = element_text(size = 14),
-        legend.title = element_text(size = 14),
-        plot.title = element_text(size = 14, face = "bold"),
+        legend.position = "None",
+        plot.title = element_text( face = "bold"),
         panel.spacing = unit(0, "lines")
       )
-    
   )
 
 
@@ -238,7 +240,7 @@ emmt_dat_reverse <-
   mutate(estimate = -estimate)
 
 # heat map-----------
-heatmaps <-
+heatmaps4 <-
   emmt_dat %>%
   mutate("significant or not" = ifelse(asymp.LCL < 0 &
                                          asymp.UCL > 0, "no", "yes")) %>%
@@ -247,6 +249,7 @@ heatmaps <-
   bind_rows(emmt_dat_reverse) %>%
   mutate(g1 = str_remove(g1, "interval"),
          g2 = str_remove(g2, "interval")) %>%
+  filter(coating %in% c("S1", "S2")) %>%
   split(.$cytokine) %>%
   imap(
     ~ complete(.x, g2, g1, day, cytokine, coating) %>%
@@ -266,7 +269,7 @@ heatmaps <-
         high = scales::muted("red"),
         low = scales::muted("blue")
       ) +
-      theme_ipsum() +
+      theme_ipsum(base_family="sans") +
       geom_tile() +
       geom_point(
         aes(shape = `significant or not`),
@@ -274,37 +277,21 @@ heatmaps <-
         size = 2
       ) +
       scale_shape_manual(values = c(NA, 8)) +
-      labs(shape = "significantly\ndifferent?", x = "Comparison", y = "") +
+      labs(shape = "significantly\ndifferent?", x = "Comparison", y = "",
+            #title = paste("CD4+ T cells (", .y, ")")
+           ) +
       facet_wrap(
         ~ coating,
         scales = "free",
         strip.position = "top",
         nrow = 1
       ) +
-      ggtitle(paste("Estimated fold change in percentage of spike-specific", .y ,"-producing 
-                    CD4+ T cells")) +
       theme(
-        strip.placement = "outside",
-        axis.text = element_text(size = 10),
-        axis.title = element_text(size = 10),
-        strip.text = element_text(size = 10),
-        legend.text = element_text(size = 12),
-        legend.title = element_text(size = 12)
+        strip.placement = "outside"
       )
   )
 
 
-```
-
-```{r, fig.height = 4}
-plots[[1]]
-```
-
-```{r, fig.width=14, fig.height=6}
-heatmaps[[1]]
-#cowplot::plot_grid(plotlist = list( plots[[1]], heatmaps[[1]] ), nrow = 2, ncol = 1)
-ggsave(filename = "figures_tables/Tcell/Tcell_CD4_SF4.png", width = 16, height=12, bg = "white")
-#ggsave(filename = "figures_tables/Tcell/Tcell_CD4_SF4.pdf", width = 16, height=12, bg = "white")
 ```
 
 ### Supplementary Table 6. Statistical comparisons of percentage of SARS-CoV-2 spike-specific IFNγ, IL-2, and TNFα producing CD4+ T cells through 24 weeks following dose 2.
@@ -326,10 +313,20 @@ emmt_table <-
   bind_rows() %>%
   separate(info, c("cytokine", "coating"), "_")
 
-emmt_table %>%
+Tcell_CD4_ST6 <-
+  emmt_table %>%
   as_tibble() %>%
   dplyr::select(contrast, ratio, day, cytokine, coating, p.value) %>%
-  filter(p.value < 0.05) %>%
+  mutate(contrast = str_remove_all(contrast, "interval")) %>%
+  mutate(
+    day = forcats::fct_recode(
+      factor(day),
+      "7 (1)" = "64",
+      "30 (4)" = "87",
+      "86 (12)" = "143",
+      "169 (24)" = "227"
+    )
+  ) %>%
   rename(
     "Pairwise comparison" = contrast,
     "Fold change" = "ratio",
@@ -337,17 +334,28 @@ emmt_table %>%
     "Coating" = "coating",
     "Adjusted P-value" = "p.value"
   ) %>%
+  mutate(
+    `Adjusted P-value` = round(`Adjusted P-value`, digits = 6),
+    `Fold change` = round(`Fold change`, digits = 6)
+  ) %>%
+  filter(`Adjusted P-value` < 0.05)
+
+Tcell_CD4_ST6 %>%
   DT::datatable(
     caption = "Statistical comparisons of percentage of SARS-CoV-2
                 spike-specific IFNγ, IL-2, and TNFα producing CD4+ T cells through 24 weeks
                 following dose 2"
-  ) %>%
-  formatSignif(columns = c('Fold change', 'Adjusted P-value'),
-               digits = 7)
+  ) 
+```
 
+```{r echo = FALSE}
+writexl::write_xlsx(Tcell_CD4_ST6, "figures_tables/Tcell/Tcell_CD4_ST6.xlsx")
 ```
 
 ### Supplementary Figure 12 Statistical comparisons of percentage of SARS-CoV-2 spike-specific IFNγ, IL-2, and TNFα producing CD4+ T cells through 24 weeks following dose 2 (Supplementary Table 6 visualization)
+
+Each dot corresponds to the estimated fold change for the contrasted prime-boost dosing interval. Error bars are multivariate t adjusted 95% CIs on the estimated contrast.
+
 ```{r, fig.width=21, fig.height=24}
 cd4 <-
   emmt_table %>%
@@ -529,13 +537,13 @@ emmt_ind8 <-
 ```
 
 ### Residual diagnostics for CD8+ data
-```{r, fig.height = 8, fig.width=12}
+```{r, fig.height = 16, fig.width = 16}
 fits <- purrr::transpose(beta_fits8)[[1]] 
 
 assumption_plots <-
   imap(
     fits ,
-    ~ assumption_check(.x) %>%
+    ~ assumption_check(.x, .x$y) %>%
       plot_grid(
         ggdraw() + draw_label(
           paste0(str_replace(.y, "_", ", " ), "-specific"),
@@ -551,7 +559,7 @@ assumption_plots <-
 ggarrange(plotlist = assumption_plots)
 ```
 
-### Supplementary Figure 4CD: CD8 fold change
+### Supplementary Figure 5CD: CD8 fold change
 
 ```{r}
 set.seed(100)
@@ -574,9 +582,17 @@ emmt_dat_reverse8 <-
   separate(contrast, c("g2", "g1"), " - ")%>%
   mutate(estimate = -estimate)
 
-plots <-
+plots8 <-
   emmt_ind8 %>%
-  mutate(day = as.numeric(as.character(day))) %>%
+   mutate(
+    day = forcats::fct_recode(
+      factor(day),
+      "1 week post-boost" = "64",
+      "4 weeks post-boost" = "87",
+      "12 weeks post-boost" = "143",
+      "24 weeks post-boost" = "227"
+    )
+  ) %>%
   mutate(
     interval = forcats::fct_recode(
       interval,
@@ -589,10 +605,11 @@ plots <-
       "Prime only" = "0"
     )
   ) %>%
+  filter(coating %in% c("S1", "S2")) %>%
   split(.$cytokine) %>%
   imap(
     ~ .x %>%
-      filter(day == 227) %>%
+      filter(day == "24 weeks post-boost") %>%
       ggplot(aes(
         x = interval, y = response * 100, color = interval
       )) +
@@ -607,11 +624,9 @@ plots <-
       theme_bw() +  theme(panel.grid.major = element_line(colour = "grey100")) +
       facet_grid(day ~ coating, space = "free_x", scales = "free") +
       labs(
-        title = paste("CD4+ T cells (", .y, ")"),
-        subtitle = "24 weeks after the boost dose according to antigen and
-           mRNA-1273 dosing interval",
+        title = paste("CD8+ T cells (", .y, ")"),
         x = "",
-        y = "Estimated % of CD8+ T cells"
+        y = "Estimated CD8+ T cells, %"
       ) +
       theme(
         axis.text = element_text(size = 9),
@@ -620,19 +635,16 @@ plots <-
           hjust = 1,
           vjust = 1
         ),
-        axis.title = element_text(size = 14),
-        strip.text = element_text(size = 10),
-        legend.text = element_text(size = 14),
-        legend.title = element_text(size = 14),
-        plot.title = element_text(size = 14, face = "bold"),
-        panel.spacing = unit(0, "lines")
+        plot.title = element_text( face = "bold"),
+        panel.spacing = unit(0, "lines"),
+        legend.position = "None"
       )
     
   )
 
 
-### Supplementary Figure 4D: CD8 heatmap
-heatmaps <-
+### Supplementary Figure 5D: CD8 heatmap
+heatmaps8 <-
   emmt_dat8 %>%
   mutate("significant or not" = ifelse(asymp.LCL < 0 &
                                          asymp.UCL > 0, "no", "yes")) %>%
@@ -641,6 +653,7 @@ heatmaps <-
   bind_rows(emmt_dat_reverse8) %>%
   mutate(g1 = str_remove(g1, "interval"),
          g2 = str_remove(g2, "interval")) %>%
+  filter(coating %in% c("S1", "S2")) %>%
   split(.$cytokine) %>%
   imap(
     ~ complete(.x, g2, g1, day, cytokine, coating) %>%
@@ -660,7 +673,7 @@ heatmaps <-
         high = scales::muted("red"),
         low = scales::muted("blue")
       ) +
-      theme_ipsum() +
+      theme_ipsum(base_family="sans") +
       geom_tile() +
       geom_point(
         aes(shape = `significant or not`),
@@ -668,44 +681,53 @@ heatmaps <-
         size = 2
       ) +
       scale_shape_manual(values = c(NA, 8)) +
-      labs(shape = "significantly\ndifferent?", x = "Comparison", y = "") +
+      labs(shape = "significantly\ndifferent?", x = "Comparison", y = "",
+            #title = paste("CD8+ T cells (", .y, ")")
+           ) +
       facet_wrap(
         ~ coating,
         scales = "free",
         strip.position = "top",
         nrow = 1
       ) +
-      ggtitle(
-        paste(
-          "Estimated fold change in percentage of spike-specific",
-          .y ,
-          "-producing
-                    CD8+ T cells"
-        )
-      ) +
       theme(
-        strip.placement = "outside",
-        axis.text = element_text(size = 10),
-        axis.title = element_text(size = 10),
-        strip.text = element_text(size = 10),
-        legend.text = element_text(size = 12),
-        legend.title = element_text(size = 12)
+        strip.placement = "outside"
       )
   )
 
 
 ```
 
-```{r, fig.height = 4}
-plots[[1]]
+Each dot in the left panel of the following figure corresponds to the estimated mean for the prime-boost dosing interval. Error bars are 95% CIs on the estimated mean. Right panel shows statistical comparisons between the dosing interval groups, with significant differences denoted by an asterisk if the P-value was less than 0.05.
 
+```{r, fig.width = 12, fig.height = 8}
+hmaps <-
+  cowplot::plot_grid(
+    plotlist = list(heatmaps4[[1]], NULL, heatmaps8[[1]], NULL),
+    rel_heights = c(50, 1, 50, 7),
+    nrow = 4,
+    ncol = 1
+  )
+lineplots <-
+  cowplot::plot_grid(
+    plotlist = list(NULL, plots4[[1]],  plots8[[1]]),
+    nrow = 3,
+    ncol = 1,
+    rel_heights = c(2, 10, 10)
+  )
+figure5 <-
+  cowplot::plot_grid(
+    plotlist = list(lineplots, hmaps),
+    nrow = 1,
+    ncol = 2,
+    rel_widths = c(0.9, 1.4)
+  )
+figure5
 ```
-```{r, fig.width=14, fig.height=6}
-heatmaps[[1]]
-#cowplot::plot_grid(plotlist = list( plots[[1]], heatmaps[[1]] ), nrow = 2, ncol = 1)
-ggsave(filename = "figures_tables/Tcell/Tcell_CD8_SF4B.png", width = 16, height=12, bg = "white")
-#ggsave(filename = "figures_tables/Tcell/Tcell_CD8_SF4B.pdf", width = 16, height=12, bg = "white")
 
+```{r echo=FALSE}
+ggsave(filename = "figures_tables/Tcell/Tcell_figure5.png", width = 12, height=8, bg = "white")
+ggsave(filename = "figures_tables/Tcell/Tcell_figure5.pdf", width = 12, height=8, bg = "white")
 ```
 
 ### Supplementary Table 7. Statistical comparisons of percentage of SARS-CoV-2 spike-specific IFNγ, IL-2, and TNFα producing CD8+ T cells through 24 weeks following dose 2
@@ -727,9 +749,20 @@ emmt_table8 <-
   bind_rows() %>%
   separate(info, c("cytokine", "coating"), "_")
 
-emmt_table8 %>%
+Tcell_CD8_ST7 <-
+  emmt_table8 %>%
   as_tibble() %>%
   dplyr::select(contrast, ratio, day, cytokine, coating, p.value) %>%
+  mutate(contrast = str_remove_all(contrast, "interval")) %>%
+  mutate(
+    day = forcats::fct_recode(
+      factor(day),
+      "7 (1)" = "64",
+      "30 (4)" = "87",
+      "86 (12)" = "143",
+      "169 (24)" = "227"
+    )
+  ) %>%
   filter(p.value < 0.05) %>%
   rename(
     "Pairwise comparison" = contrast,
@@ -738,14 +771,27 @@ emmt_table8 %>%
     "Coating" = "coating",
     "Adjusted P-value" = "p.value"
   ) %>%
+  mutate(
+    `Adjusted P-value` = round(`Adjusted P-value`, digits = 6),
+    `Fold change` = round(`Fold change`, digits = 6)
+  ) %>%
+  filter(`Adjusted P-value` < 0.05)
+
+Tcell_CD8_ST7 %>%
   DT::datatable(caption = "Statistical comparisons of percentage of SARS-CoV-2 spike-specific IFNγ, IL-2, and TNFα producing CD8+ T cells through 24 weeks following dose 2
-") %>%
-  formatSignif(columns = c('Fold change', 'Adjusted P-value'),
-               digits = 7)
+") 
 
 ```
 
+```{r echo = FALSE}
+writexl::write_xlsx(Tcell_CD8_ST7, "figures_tables/Tcell/Tcell_CD8_ST7.xlsx")
+```
+
+
 ### Supplementary Figure 13 Statistical comparisons of percentage of SARS-CoV-2 spike-specific IFNγ, IL-2, and TNFα producing CD8+ T cells through 24 weeks following dose 2 (Supplementary Table 7 visualization)
+
+Each dot corresponds to the estimated fold change for the contrasted prime-boost dosing interval. Error bars are multivariate t adjusted 95% CIs on the estimated contrast.
+
 ```{r, fig.width=26, fig.height=24}
 cd8 <-
   emmt_table8 %>%
@@ -871,7 +917,10 @@ pgrid <-
 
 p <- plot_grid(legend, pgrid, ncol = 1, rel_heights  = c(.05, 1))
 p
+```
 
+
+```{r echo = FALSE}
 ggsave(
   filename = "figures_tables/Tcell/cd8_emmeans.pdf",
   plot = p,
@@ -883,8 +932,6 @@ ggsave(
 ggsave(filename = "figures_tables/Tcell/cd8_emmeans.png",
        width = 26,
        height = 24)
-
-
 ```
 
 ## Session information
